@@ -43,3 +43,19 @@
 이 자료의 PDD 응답 헤더에는 `x-decode-target`이 없다. 옛 proxy의 실제 출력이므로
 추가하지 않았다. decoder 배정 시험용 헤더는 `synthetic/pdd_skew/`에만 있다.
 새 loadgen의 `token_times_monotonic` 등의 필드로 이름을 바꾸는 작업은 WP1이다.
+
+## PC4 all-smi 원문 발췌
+
+`allsmi_metrics_sample.txt`는 2026-11-06에 all-smi 0.28.1을
+`api --port <임의 포트> --interval 1`로 실행해 받은 실제 Prometheus 텍스트다.
+GPU 1장과 RBLN-CA22 2장의 utilization·memory·power·info, CPU·메모리
+지표를 발췌했다. 반복되는 HELP·TYPE 줄과 수치는 원문 그대로다.
+호스트·사용자명은 `<REDACTED_HOST>`·`<REDACTED_USER>`, 장치 UUID와
+시리얼 번호는 일관된 `<REDACTED_DEVICE_UUID_N>`·`<REDACTED_SERIAL_N>`으로
+치환했다. 장치 인덱스와 PCI 버스 ID는 보존했다.
+
+바인드는 `0.0.0.0`, `/-/ready`는 첫 수집 전 503, 이후 200이었다.
+유휴 상태에서 29.33초 실행 후 종료했으며, 자식 프로세스를 포함해
+0.814 CPU초(한 코어 기준 평균 2.77%)를 사용했다. 부하 중 수집과 장치
+대응의 안정성은 H2에서 확인해야 한다. NVIDIA의 info에는 PCI 버스 ID가
+없었고, NPU에는 `pci_bus_id`가 있었다. 이 자료는 합성 기대값이 아니다.

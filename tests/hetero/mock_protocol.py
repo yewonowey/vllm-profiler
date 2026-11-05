@@ -47,8 +47,7 @@ def sse(payload):
     return ("data: " + json.dumps(payload) + "\n\n").encode()
 
 
-# TODO(verify: H2/H5): Confirm all-smi names/labels/index mapping (PC4, H2),
-# vLLM names/labels (H0) and decoder NIXL histogram names/count units (H5).
+# TODO(verify: H0/H5): Confirm vLLM names/labels and NIXL histogram count units.
 # Values and buckets are synthetic; they do not assert HW units or device mapping.
 VLLM_NAMES = {
     "success": "vllm:request_success_total",
@@ -59,6 +58,10 @@ VLLM_NAMES = {
 }
 MODEL_LABELS = 'model_name="mock"'
 SUCCESS_LABELS = MODEL_LABELS + ',finished_reason="length"'
+# PC4 confirmed (2026-11-06), all-smi 0.28.1: names and labels below.
+# Real service binds 0.0.0.0; /-/ready returns 503 before collection, then 200.
+# NPU gpu_info carries pci_bus_id; NVIDIA gpu_info did not expose a bus ID.
+# TODO(verify: H2): Verify device mapping stability and readings under load.
 ALLSMI_NAMES = (
     "all_smi_cpu_utilization",
     "all_smi_memory_used_bytes",
@@ -67,6 +70,7 @@ ALLSMI_NAMES = (
     "all_smi_gpu_power_consumption_watts",
 )
 DEVICES = ("Mock GPU", "RBLN-CA22", "RBLN-CA22")
+ALLSMI_HOST_LABELS = 'instance="mock",hostname="mock",index="0"'
 
 
 def histogram(name, samples):
@@ -81,11 +85,29 @@ def histogram(name, samples):
 def metrics_text(role, durations, running):
     if role == "all-smi":
         lines = [f"# TYPE {name} gauge" for name in ALLSMI_NAMES]
-        lines.extend((f"{ALLSMI_NAMES[0]} 12.5", f"{ALLSMI_NAMES[1]} 1073741824"))
+        lines.extend(
+            (
+                f'{ALLSMI_NAMES[0]}{{cpu_model="Mock CPU",{ALLSMI_HOST_LABELS}}} 12.5',
+                f"{ALLSMI_NAMES[1]}{{{ALLSMI_HOST_LABELS}}} 1073741824",
+                "# TYPE all_smi_gpu_info gauge",
+            )
+        )
         for index, device in enumerate(DEVICES):
-            labels = f'gpu_index="{index}",gpu_name="{device}"'
+            labels = (
+                f'gpu="{device}",instance="mock",gpu_uuid="mock-{index}",'
+                f'gpu_index="{index}"'
+            )
             for name, value in zip(ALLSMI_NAMES[2:], (25, 536870912, 45)):
                 lines.append(f"{name}{{{labels}}} {value + index}")
+            info = (
+                'type="GPU"'
+                if index == 0
+                else (
+                    f'type="NPU",device_path="rbln{index - 1}",'
+                    f'pci_bus_id="0000:{index:02x}:00.0"'
+                )
+            )
+            lines.append(f"all_smi_gpu_info{{{labels},{info}}} 1")
     else:
         success, gauge = VLLM_NAMES["success"], VLLM_NAMES["running"]
         lines = [

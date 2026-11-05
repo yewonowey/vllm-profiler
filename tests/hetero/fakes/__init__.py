@@ -17,18 +17,26 @@ from tests.hetero.mock_server import (
 )
 
 
-def install_fake_tools(directory):
+def install_fake_tools(directory, versions=None):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     repo = Path(__file__).resolve().parents[3]
-    for name, entrypoint in (("all-smi", "fake_allsmi"), ("otelcol", "fake_otelcol")):
+    entries = {"all-smi": "fake_allsmi", "otelcol": "fake_otelcol"}
+    entries.update({name: None for name in (versions or {}) if name not in entries})
+    for name, entrypoint in entries.items():
         path = directory / name
         path.write_text(
             f"#!{sys.executable}\n"
             "import sys\n"
+            "if sys.argv[1:] == ['--version']:\n"
+            f"    print({(versions or {}).get(name, 'unversioned')!r})\n"
+            "    raise SystemExit(0)\n"
             f"sys.path.insert(0, {str(repo)!r})\n"
-            f"from tests.hetero.fakes import {entrypoint}\n"
-            f"{entrypoint}()\n",
+            + (
+                f"from tests.hetero.fakes import {entrypoint}\n{entrypoint}()\n"
+                if entrypoint
+                else "raise SystemExit('unsupported fake command')\n"
+            ),
             encoding="utf-8",
         )
         path.chmod(0o755)
