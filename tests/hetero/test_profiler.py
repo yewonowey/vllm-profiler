@@ -112,6 +112,7 @@ class ProfilerTests(unittest.TestCase):
                 self.assertEqual(result, int(fail))
                 data = json.loads((root / "run.json").read_text())
                 steps = [s for s in CASE["steps"] if not (fail and s == "span_wait")]
+                steps += ["w:analysis"]
                 self.assertEqual([s["name"] for s in data["steps"]], steps)
                 for process in fake.processes:
                     process.terminate.assert_called_once()
