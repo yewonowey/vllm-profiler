@@ -93,9 +93,10 @@ def loadgen_args(work, config):
     values.update(workload=work["name"], **{k: work[k] for k in FIELDS[1:5]})
     argv = [sys.executable, str(HARNESS / "loadgen.py"), *flags(**values)]
     if config["configuration"] == "baseline":
-        for role, slots in work["slots"].items():
-            if slots:
-                argv += flags(worker=f"{role}={config['endpoints'][role]}={slots}")
+        for slot in range(max(work["slots"].values())):
+            for role in DEVICES:
+                if slot < work["slots"][role]:
+                    argv += flags(worker=f"{role}={config['endpoints'][role]}=1")
     else:
         target = config["endpoints"]["proxy"]
         argv += flags(endpoint=target, concurrency=work["concurrency"])

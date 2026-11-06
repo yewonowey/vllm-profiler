@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import argparse
+import csv
 import json
 import math
 import statistics
@@ -11,7 +12,7 @@ from pathlib import Path
 if __package__ is None:
     sys.path[0] = str(Path(__file__).resolve().parents[3])
 
-from tools.hetero.profiler import expected, log
+from tools.hetero.profiler import expected, log, resources, server, transfer
 from tools.hetero.profiler.expected import request_succeeded
 
 KV_KINDS = ("kv_xfer_start", "kv_xfer_done", "kv_h2d")
@@ -134,7 +135,7 @@ def client_metrics(rows):
     return dict(requests=requests, summary=summary)
 
 
-def join_requests(root, rows, config):
+def join_requests(root, rows, config, spans=None, events=None, window=(0, 0)):
     ids = expected.expected_ids(rows, config)
     current = {expected.server_request_id(r["request_id"]) for r in rows}
     kinds, wanted = {}, set()
@@ -152,11 +153,29 @@ def join_requests(root, rows, config):
                     rid = expected.attribute(span, "gen_ai.request.id")
                     if rid in current:
                         seen[role, rid, "span"] += 1
+                        if spans is not None:
+                            attrs = span.get("attributes", [])
+                            attrs = {
+                                a["key"]: next(iter(a["value"].values())) for a in attrs
+                            }
+                            attrs["start"] = int(span["startTimeUnixNano"])
+                            attrs["end"] = int(span["endTimeUnixNano"])
+                            spans.setdefault(role, {})[rid] = attrs
     for role in kinds:
+        if events is not None:
+            events[role] = []
+        names = {expected.server_request_id(rid) for rid in ids[role]}
         for path in (root / "rbln_metrics" / role).glob("events_*.jsonl"):
             for event in expected.live_rows(path):
                 rid, kind = event.get("req_id"), event["kind"]
                 base = expected.engine_request_base(rid)
+                start = event.get("span_start_ns", 0) / 1e9
+                end = event.get("span_end_ns", 0) / 1e9
+                step = kind == "step" and window[0] <= start <= end <= window[1]
+                if events is not None and (
+                    kind == "kv_layout" or base in names or step
+                ):
+                    events[role].append(event)
                 if kind in kinds[role] and (base is None or base in current):
                     target = unmatched if base is None else seen
                     target[role, base or rid, kind] += 1
@@ -176,6 +195,41 @@ def join_requests(root, rows, config):
     return result
 
 
+def validate_measurement(samples, boundaries, roles, window):
+    checks, failures = {}, []
+    minimum = max(2, 0.8 * (window[1] - window[0]))
+    counts = Counter(
+        r["endpoint"]
+        for r in samples
+        if r["status"] == 200 and window[0] <= r["mono_ns"] / 1e9 <= window[1]
+    )
+    edges = {(r["endpoint"], r["label"]) for r in boundaries if r["status"] == 200}
+    for role in (*roles, "all-smi"):
+        checks[role] = dict(samples=counts[role], minimum=minimum)
+        if counts[role] < minimum:
+            failures.append(
+                f"{server.SERIES}: {role} {counts[role]} samples < {minimum:g}"
+            )
+        for label in () if role == "all-smi" else ("before", "after"):
+            if (role, label) not in edges:
+                failures.append(f"{server.BOUNDARY}: {role} missing successful {label}")
+    status = "INCOMPLETE" if failures else "PASS"
+    return dict(analysis_status=status, checks=checks, failures=failures)
+
+
+def write_csv(path, rows):
+    with path.open("w", newline="") as handle:
+        fields = sorted({k for row in rows for k in row})
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for row in rows:
+            values = {
+                k: json.dumps(v) if isinstance(v, (dict, list)) else v
+                for k, v in row.items()
+            }
+            writer.writerow(values)
+
+
 def analyze(service_run, workload):
     root, folder = Path(service_run), Path(service_run) / workload
     if folder.resolve().is_relative_to(Path(__file__).resolve().parents[3]):
@@ -186,27 +240,88 @@ def analyze(service_run, workload):
     rows = list(expected.live_rows(folder / "requests.jsonl"))
     workload_config = json.loads((folder / "config.json").read_text())
     result = validate_raw(folder, rows, workload_config)
-    result.update(
-        client=client_metrics(rows), per_device={}, analysis_status="NOT_COLLECTED"
-    )
-    result.update(configuration=config["configuration"], mode=mode, workload=workload)
-    for role, ids in expected.expected_ids(rows, config).items():
-        subset = [
-            r for r in rows if r["request_id"] in ids or r["assigned_target"] == role
-        ]
-        result["per_device"][role] = client_metrics(subset)
-    if mode in ("trace", "deep"):
-        joined = result["request_join"] = join_requests(root, rows, config)
-        result["analysis_status"] = "PASS" if joined["complete"] else "INCOMPLETE"
+    ids, spans, events = expected.expected_ids(rows, config), {}, {}
+    trace = mode in ("trace", "deep")
+    start = min((r["scheduled_arrival_monotonic"] for r in rows), default=0)
+    window = start, max((r["completed_monotonic"] for r in rows), default=start)
+    collected, boundaries = [
+        list(expected.live_rows(folder / "monitor" / f"{k}.jsonl"))
+        for k in ("metrics", "boundaries")
+    ]
+    result["analysis_status"] = "NOT_COLLECTED"
+    if mode != "none":
+        checks = validate_measurement(collected, boundaries, ids, window)
+        result["failures"] += checks.pop("failures")
+        result.update(checks)
+    if trace:
+        joined = result["request_join"] = join_requests(
+            root, rows, config, spans, events, window
+        )
+        for role in (r for r in ids if r.startswith("decode")):
+            layouts = [
+                e
+                for e in events[role]
+                if e["kind"] == "kv_layout" and e["monotonic_ns"] / 1e9 <= start
+            ]
+            if not any(e["use_host_buffer"] for e in layouts):
+                result["failures"].append(
+                    f"rbln_metrics/{role}: missing pre-measurement host buffer layout"
+                )
+                result["analysis_status"] = "INCOMPLETE"
+        if not joined["complete"]:
+            result["analysis_status"] = "INCOMPLETE"
         for kind in ("missing", "unexpected", "duplicates", "unmatched"):
             for item in joined[kind]:
                 result["failures"].append(
                     f"{kind}: {item} (otel/traces.jsonl or rbln_metrics)"
                 )
-    (folder / "profile").mkdir(exist_ok=True)
-    (folder / "profile" / "summary.json").write_text(
-        json.dumps(result, indent=2) + "\n"
+    result.update(client=client_metrics(rows), per_device={})
+    result.update(configuration=config["configuration"], mode=mode, workload=workload)
+    for role, names in ids.items():
+        subset = [
+            r for r in rows if r["request_id"] in names or r["assigned_target"] == role
+        ]
+        result["per_device"][role] = client_metrics(subset)
+    result.update(
+        server={}, transfer={}, memory_bandwidth={}, phase_resources={}, energy={}
     )
+    if mode != "none" and rows:
+        links = json.loads((root / "links.json").read_text())
+        loadgen = json.loads((folder / "loadgen_run.json").read_text())
+        anchors = [v for k, v in loadgen.items() if k.startswith("clock_anchor_")]
+        result["server"] = server.server_metrics(
+            boundaries, collected, spans, trace, window, ids
+        )
+        result["transfer"], result["memory_bandwidth"] = transfer.transfer_metrics(
+            config, rows, events, result["server"], links, window
+        )
+        series = resources.read_samples(collected, links, window)
+        phases = resources.phase_intervals(rows, ids, spans, events, anchors, trace)
+        result["phase_resources"] = resources.phase_resources(
+            series, phases, window, trace
+        )
+        power = {d: series[d, "power"] for d in resources.DEVICES}
+        tokens = result["client"]["summary"]["actual_output_tokens_total"]["value"]
+        result["energy"] = resources.energy_efficiency(power, window, tokens)
+    result["request_phase_share"] = resources.request_phase_share(
+        rows, ids, spans, result["transfer"], trace
+    )
+    result["other_seconds"] = server.metric(None, "s", "M12", "미구현(후속)")
+    profile = folder / "profile"
+    profile.mkdir(exist_ok=True)
+    records = [
+        dict(request_id=r["request_id"], metric=k, **v)
+        for r in result["client"]["requests"]
+        for k, v in r["metrics"].items()
+    ]
+    write_csv(profile / "requests.csv", records)
+    write_csv(
+        profile / "phase_resources.csv", result["phase_resources"].get("samples", [])
+    )
+    payloads = {k: result[k] for k in ("transfer", "energy")}
+    payloads.update(summary=result, memory_bw=result["memory_bandwidth"])
+    for name, data in payloads.items():
+        (profile / f"{name}.json").write_text(json.dumps(data, indent=2) + "\n")
     for failure in result["failures"]:
         log.log_line("analysis", f"{folder}: {failure}")
     return int(bool(result["failures"]))

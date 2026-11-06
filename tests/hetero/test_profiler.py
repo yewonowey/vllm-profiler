@@ -23,6 +23,13 @@ class ProfilerTests(unittest.TestCase):
             self.assertEqual(actual, (env, args))
         for work, config, routing in CASE["routing"]:
             run.validate_workloads([work], config["configuration"])
+            if config["configuration"] == "baseline":
+                targets = ("gpu", "npu0", "npu1", "npu0", "npu1", "npu1")
+                routing = [
+                    v
+                    for r in targets
+                    for v in ("--worker", f"{r}={config['endpoints'][r]}=1")
+                ]
             self.assertEqual(run.loadgen_args(work, config)[-len(routing) :], routing)
         for config, bad in CASE["invalid"]:
             with self.assertRaises(ValueError):
