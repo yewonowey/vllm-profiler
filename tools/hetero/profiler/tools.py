@@ -40,7 +40,7 @@ def capture_links(gpu_index, out_path):
             "nvidia-smi",
             "-i",
             str(gpu_index),
-            "--query-gpu=pci.bus_id,pcie.link.gen.max,pcie.link.width.max",
+            "--query-gpu=uuid,pci.bus_id,pcie.link.gen.max,pcie.link.width.max",
             "--format=csv,noheader",
         ],
         "rbln_smi": ["rbln-smi", "--json"],
