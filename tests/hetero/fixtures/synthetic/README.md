@@ -17,3 +17,9 @@
 `expected.json`의 `requests`는 요청별 기대 지표, `expected_ids_by_role`은 성공
 요청의 서버별 기대 ID 집합이다. `planned_ids`는 원자료 개수로 예정 개수를
 대체하는 오류를 잡기 위한 독립 목록이다. 구현된 분석기는 포함하지 않는다.
+
+`profiler.json`은 WP5 시험의 입력·기대값 표다. 모드별 역할 환경과 argv,
+B0/PDD 라우팅, 거부할 workload 값, deep 실행 순서와 OTLP span 예제를 담는다.
+기대값은 WP5 명세에서 작성했으며 생산 코드의 반환값을 저장한 것이 아니다.
+HTTP 오류·명시적 error·출력 토큰 불일치 행은 옛 `success=true`가 있어도
+기대 ID 집합에서 제외되어야 한다. 이 파일은 실제 서버 출력이 아니다.
