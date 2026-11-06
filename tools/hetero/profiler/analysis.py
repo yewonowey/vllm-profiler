@@ -143,7 +143,7 @@ def join_requests(root, rows, config):
         kinds[role] = ("span",) + (KV_KINDS if kv else ())
         names = {expected.server_request_id(rid) for rid in names}
         wanted.update((role, rid, kind) for rid in names for kind in kinds[role])
-    seen = Counter()
+    seen, unmatched = Counter(), Counter()
     for batch in expected.live_rows(root / "otel" / "traces.jsonl"):
         for resource in batch.get("resourceSpans", []):
             role = expected.attribute(resource.get("resource", {}), "service.name")
@@ -152,18 +152,22 @@ def join_requests(root, rows, config):
                     rid = expected.attribute(span, "gen_ai.request.id")
                     if rid in current:
                         seen[role, rid, "span"] += 1
-    # TODO(verify: H0): RBLN req_id may differ from the OTEL external request ID.
     for role in kinds:
         for path in (root / "rbln_metrics" / role).glob("events_*.jsonl"):
             for event in expected.live_rows(path):
-                if event.get("req_id") in current and event["kind"] in kinds[role]:
-                    seen[role, event["req_id"], event["kind"]] += 1
+                rid, kind = event.get("req_id"), event["kind"]
+                base = expected.engine_request_base(rid)
+                if kind in kinds[role] and (base is None or base in current):
+                    target = unmatched if base is None else seen
+                    target[role, base or rid, kind] += 1
     groups = dict(missing=wanted - seen.keys(), unexpected=seen.keys() - wanted)
+    groups["unmatched"] = unmatched.keys()
     groups["duplicates"] = {k for k, v in seen.items() if v > 1}
     result = {}
     for key, items in groups.items():
+        counts = unmatched if key == "unmatched" else seen
         result[key] = [
-            dict(role=r, request_id=i, kind=k, count=seen[r, i, k])
+            dict(role=r, request_id=i, kind=k, count=counts[r, i, k])
             for r, i, k in sorted(items)
         ]
     result["complete"] = not any(result.values())
@@ -193,8 +197,8 @@ def analyze(service_run, workload):
         result["per_device"][role] = client_metrics(subset)
     if mode in ("trace", "deep"):
         joined = result["request_join"] = join_requests(root, rows, config)
-        result["analysis_status"] = "COMPLETE" if joined["complete"] else "INCOMPLETE"
-        for kind in ("missing", "unexpected", "duplicates"):
+        result["analysis_status"] = "PASS" if joined["complete"] else "INCOMPLETE"
+        for kind in ("missing", "unexpected", "duplicates", "unmatched"):
             for item in joined[kind]:
                 result["failures"].append(
                     f"{kind}: {item} (otel/traces.jsonl or rbln_metrics)"

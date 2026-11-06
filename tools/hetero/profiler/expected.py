@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import json
+import re
 from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -12,11 +13,18 @@ def service_config(run_dir):
     return json.loads((Path(run_dir) / "service" / "config.json").read_text())
 
 
-# TODO(verify: H0): confirm on both engines. vLLM 0.22.0:
+# H0 확인(2026-11-06). vLLM 0.22.0:
 # entrypoints/openai/engine/serving.py:399; completion/serving.py:144,180;
 # v1/engine/output_processor.py:749 uses external_req_id (single prompt, n=1).
 def server_request_id(client_id):
     return f"cmpl-{client_id}-0"
+
+
+def engine_request_base(req_id):
+    # vLLM 0.22.0 v1/engine/input_processor.py:224,232 preserves external_req_id
+    # and appends f"-{random_uuid():.8}" to the internal request_id.
+    match = re.fullmatch(r"^(?P<base>.+)-[0-9a-f]{8}$", req_id or "")
+    return match["base"] if match else None
 
 
 def expected_ids(rows, config):

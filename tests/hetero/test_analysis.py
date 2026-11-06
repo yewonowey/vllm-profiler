@@ -64,6 +64,8 @@ class AnalysisTests(unittest.TestCase):
             )
 
     def test_join(self):
+        for rid in ("x-ABCDEF12", "x-0123abcd\n", "x-123456789"):
+            self.assertIsNone(e.engine_request_base(rid))
         attr = lambda key, value: {"key": key, "value": {"stringValue": value}}
         for case in ("b0_three_devices", "pdd_skew"):
             folder = FIXTURES / "synthetic" / case
@@ -83,7 +85,8 @@ class AnalysisTests(unittest.TestCase):
                         res = dict(resource=resource, scopeSpans=[{"spans": [span]}])
                         batches.append({"resourceSpans": [res]})
                         if role.startswith("decode"):
-                            events = [dict(kind=k, req_id=sid) for k in a.KV_KINDS]
+                            eid = sid + "-0123abcd"
+                            events = [dict(kind=k, req_id=eid) for k in a.KV_KINDS]
                             path = root / "rbln_metrics" / role / "events_0.jsonl"
                             append_rows(path, events)
                 trace = root / "otel" / "traces.jsonl"
@@ -98,3 +101,15 @@ class AnalysisTests(unittest.TestCase):
                         counts = {r: v["span"] for r, v in result["matched"].items()}
                         counts_wanted = {r: len(ids) for r, ids in wanted.items()}
                         self.assertEqual(counts, counts_wanted)
+                if case == "pdd_skew":
+                    for rid, category, count in (
+                        (sid + "-deadbeef", "duplicates", 2),
+                        (sid, "unmatched", 1),
+                    ):
+                        append_rows(path, [dict(kind="kv_h2d", req_id=rid)])
+                        result = a.join_requests(root, rows, config)
+                        records = [r for r in result[category] if r["kind"] == "kv_h2d"]
+                        self.assertEqual(len(records), 1)
+                        self.assertEqual(records[0]["request_id"], sid)
+                        self.assertEqual(records[0]["count"], count)
+                        self.assertFalse(result["complete"])
