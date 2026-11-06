@@ -4,9 +4,11 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from socket import SO_REUSEADDR, SOL_SOCKET
 from unittest.mock import patch
 
 from tests.hetero.fakes import install_fake_tools
+from tools.hetero.profiler import monitors
 from tools.hetero.profiler.tools import check_tools
 
 
@@ -25,7 +27,13 @@ class ToolTests(unittest.TestCase):
             }
             install_fake_tools(temp, versions)
             env = {name: str(Path(temp) / binary) for name, binary in binaries.items()}
+            env["PDD_ALLSMI_PORT"] = str(monitors.free_port())
             with patch.dict(os.environ, env):
+                monitor = monitors.Monitors(temp)
+                self.addCleanup(monitor.stop, "all-smi")
+                for _ in range(2):
+                    monitor.allsmi()
+                    self.assertEqual(monitor.stop("all-smi"), 0)
                 for mode, count in (
                     ("none", 0),
                     ("monitor", 1),
@@ -46,6 +54,10 @@ class ToolTests(unittest.TestCase):
                 install_fake_tools(temp, {**versions, "all-smi": "all-smi 0.28.10"})
                 with self.assertRaisesRegex(RuntimeError, "expected 0.28.1"):
                     check_tools("monitor")
+            with patch.object(monitors.socket, "socket") as sock:
+                monitors.free_port()
+                options = sock.return_value.__enter__().setsockopt.call_args.args
+                self.assertEqual(options, (SOL_SOCKET, SO_REUSEADDR, 1))
 
     def test_scripts_reject_repository_paths(self):
         repo = Path(__file__).resolve().parents[2]

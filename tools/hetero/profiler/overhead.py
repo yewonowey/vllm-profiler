@@ -206,6 +206,18 @@ def save(root, data):
         for r in data["runs"]
         if r["path"] in included
     ]
+    if data["verdict"] == "ABORTED":
+        reason = (
+            data.get("error")
+            or data.get("record_error")
+            or "; ".join(s["error"] for s in data["steps"] if not s["ok"])
+        )
+        lines += ["", f"중단 사유: {reason}", "실패한 실행 (path / failures):"]
+        lines += [
+            f"- {r['path']}: {r['validity']['failures']}"
+            for r in data["runs"]
+            if not r["valid"]
+        ]
     settings = {
         k: data["settings"][k] for k in ("configuration", "workload", "service_args")
     }

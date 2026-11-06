@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+import errno
 import os
 import socket
 import subprocess
@@ -12,9 +13,20 @@ from tools.hetero.profiler.scrape import fetch, wait_until
 REPO = Path(__file__).resolve().parents[3]
 
 
-def free_port(port=0):
+def free_port(port=0, timeout=0):
     with socket.socket() as listener:
-        listener.bind(("127.0.0.1", port))
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        def available():
+            try:
+                listener.bind(("127.0.0.1", port))
+                return True
+            except OSError as exc:
+                if exc.errno != errno.EADDRINUSE:
+                    raise
+                return False
+
+        wait_until(available, timeout, f"port {port}")
         return listener.getsockname()[1]
 
 
@@ -70,7 +82,7 @@ class Monitors:
         return port
 
     def allsmi(self):
-        port = free_port(int(os.environ.get("PDD_ALLSMI_PORT", "19090")))
+        port = free_port(int(os.environ.get("PDD_ALLSMI_PORT", "19090")), 30)
         url = f"http://127.0.0.1:{port}"
         binary = os.environ.get("ALLSMI_BIN", "all-smi")
         argv = [binary, "api", "--port", str(port), "--interval", "1"]

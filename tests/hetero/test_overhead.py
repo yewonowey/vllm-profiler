@@ -68,7 +68,7 @@ class OverheadTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp, redirect_stdout(StringIO()):
                 root, names = Path(temp) / "run", list[str]()
                 work = Path(temp) / "work.json"
-                work.write_text(json.dumps(CASE["workload"]))
+                payload = CASE["workload"]
 
                 def measure(folder, work, config, on, names=names, fail=fail):
                     names.append(folder.name)
@@ -81,6 +81,9 @@ class OverheadTests(unittest.TestCase):
                 options.update(model_path=temp, model_name="mock")
                 options.update(cuda_python=executable, rbln_python=executable)
                 args = run.flags(**options)
+                work.write_text(json.dumps([payload] * 2))
+                self.assertRaises(ValueError, run.parse_args, args, single=True)
+                work.write_text(json.dumps([payload] if fail else payload))
                 stubs = dict(command=Mock(return_value=0), check_tools=Mock())
                 stubs["service_config"] = Mock(return_value=CASE["config"])
                 with patch.multiple(run, **stubs), patch.object(oh, "trial", measure):
@@ -97,4 +100,7 @@ class OverheadTests(unittest.TestCase):
                     self.assertEqual(
                         [d["verdict"] for d in data["decisions"]], ["ADD", "PASS"]
                     )
-                self.assertTrue((root / "overhead/overhead.md").read_text())
+                self.assertIn(
+                    "fake failure" if fail else "PASS",
+                    (root / "overhead/overhead.md").read_text(),
+                )

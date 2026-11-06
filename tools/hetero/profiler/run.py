@@ -294,7 +294,13 @@ def execute(args, forwarded, service, workloads, argv):
 
 def parse_args(argv=None, *, single=False):
     argv = list(sys.argv[1:] if argv is None else argv)
-    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser = argparse.ArgumentParser(
+        description="Measure PER-001 monitor overhead." if single else __doc__,
+        epilog="Append service arguments after the measurement options."
+        if single
+        else None,
+        allow_abbrev=False,
+    )
     parser.add_argument("--configuration", choices=("baseline", "pdd"), required=True)
     if single:
         parser.set_defaults(mode="none")
@@ -314,7 +320,9 @@ def parse_args(argv=None, *, single=False):
     if root.is_relative_to(REPO) or (root.exists() and any(root.iterdir())):
         raise ValueError("run-dir must be empty and outside repository")
     workloads = json.loads(args.workloads.read_text())
-    workloads = [workloads] if single else workloads
+    workloads = [workloads] if single and isinstance(workloads, dict) else workloads
+    if single and isinstance(workloads, list) and len(workloads) != 1:
+        raise ValueError("PER-001 requires exactly one workload")
     validate_workloads(workloads, args.configuration)
     forwarded += flags(configuration=args.configuration, run_dir=root / "service")
     service = orchestrate.parse_args(["start", *forwarded])
