@@ -146,17 +146,7 @@ def recorded(root, data, name, optional=False):
         log.log_line(name, row["error"] or "done")
 
 
-def execute(args, forwarded, service, workloads, argv):
-    root, mode = args.run_dir, args.mode
-    (root / "monitor").mkdir(parents=True, exist_ok=True)
-    log.RUN_ID = root.name
-    data = dict(argv=argv, workloads=workloads, mode=mode, steps=[])
-    data.update(configuration=args.configuration, analysis_status="PENDING")
-    monitors, started = Monitors(root), False
-    traced = mode in ("trace", "deep")
-    service_cmd = [sys.executable, str(HARNESS / "orchestrate.py")]
-    service_dir = root / "service"
-
+def stage_functions(root, data):
     def call(name, function, *values, optional=False):
         with recorded(root, data, name, optional):
             return function(*values)
@@ -165,6 +155,20 @@ def execute(args, forwarded, service, workloads, argv):
         task = partial(command, root, name.replace(":", "-"))
         return call(name, task, argv, optional=optional)
 
+    return call, cli
+
+
+@contextmanager
+def service_session(args, forwarded, service, data):
+    root, mode = args.run_dir, args.mode
+    (root / "monitor").mkdir(parents=True, exist_ok=True)
+    log.RUN_ID = root.name
+    monitors, started = Monitors(root), False
+    traced = mode in ("trace", "deep")
+    service_cmd = [sys.executable, str(HARNESS / "orchestrate.py")]
+    service_dir = root / "service"
+
+    call, cli = stage_functions(root, data)
     cleanup = partial(call, optional=True)
     cleanup_cli = partial(cli, optional=True)
     try:
@@ -191,51 +195,12 @@ def execute(args, forwarded, service, workloads, argv):
         if mode != "none":
             endpoints["all-smi"] = call("allsmi_start", monitors.allsmi)
             cleanup("links", capture_links, 0, root / "links.json")
-        expected = {role: set() for role in config["endpoints"] if role != "proxy"}
-        snapshot = partial(boundary_snapshot, config["metrics_endpoints"])
-        scrape = partial(monitors.scrape, endpoints)
-        servers = {r: u for r, u in config["endpoints"].items() if r != "proxy"}
-        for work in workloads:
-            name, folder = work["name"], root / work["name"]
-            loadgen, metrics = loadgen_args(work, config), folder / "monitor"
-            boundary = partial(snapshot, metrics / "boundaries.jsonl")
-            control = partial(profile_control, folder / "profile_control.jsonl")
-            warmup = flags(warmup_per_endpoint=work["warmup"])
-            warmup += flags(out_dir=folder / "warmup")
-            cli(name + ":warmup", loadgen + ["--warmup-only", *warmup])
-            profiles = {}
-            try:
-                if mode != "none":
-                    call(name + ":scrape_start", scrape, metrics / "metrics.jsonl")
-                    call(name + ":before", boundary, "before")
-                if mode == "deep":
-                    for role, url in servers.items():
-                        profiles[role] = url
-                        action = "start_profile"
-                        call(f"{name}:{action}:{role}", control, role, url, action)
-                measurement = loadgen + flags(warmup_per_endpoint=0, out_dir=folder)
-                cli(name + ":measure", measurement)
-            finally:
-                for role, url in profiles.items():
-                    action = "stop_profile"
-                    cleanup(f"{name}:{action}:{role}", control, role, url, action)
-                if "scrape" in monitors.processes:
-                    cleanup(name + ":after", boundary, "after")
-                    cleanup(name + ":scrape_stop", monitors.stop, "scrape")
-            if traced:
-                text = (folder / "requests.jsonl").read_text()
-                wanted = expected_ids(map(json.loads, text.splitlines()), config)
-                for role, ids in wanted.items():
-                    expected[role].update(ids)
-        if traced:
-            result = call("span_wait", wait_for_spans, root, expected)
-            if not result["complete"]:
-                data["analysis_status"] = "INCOMPLETE"
-                log.log_line("span_wait", f"missing: {result['missing']}")
+        yield config, monitors, call, cli, endpoints
     except (Exception, KeyboardInterrupt) as exc:
         data["error"] = f"{type(exc).__name__}: {exc}"
         if not data["steps"] or data["steps"][-1]["ok"]:
             log.log_line("run", data["error"])
+        raise
     finally:
         for name in ("scrape", "all-smi"):
             if name in monitors.processes:
@@ -245,6 +210,76 @@ def execute(args, forwarded, service, workloads, argv):
             cleanup_cli("service_stop", stop)
         if "otelcol" in monitors.processes:
             cleanup("collector_stop", monitors.stop, "otelcol")
+
+
+@contextmanager
+def workload_session(work, config, folder, mode, monitors, call, cli, endpoints):
+    cleanup = partial(call, optional=True)
+    servers = {r: u for r, u in config["endpoints"].items() if r != "proxy"}
+    name = work["name"]
+    loadgen, metrics = loadgen_args(work, config), folder / "monitor"
+    boundary = partial(
+        boundary_snapshot, config["metrics_endpoints"], metrics / "boundaries.jsonl"
+    )
+    control = partial(profile_control, folder / "profile_control.jsonl")
+    warmup = flags(warmup_per_endpoint=work["warmup"])
+    warmup += flags(out_dir=folder / "warmup")
+    cli(name + ":warmup", loadgen + ["--warmup-only", *warmup])
+    profiles = {}
+    try:
+        if mode != "none":
+            call(
+                name + ":scrape_start",
+                monitors.scrape,
+                endpoints,
+                metrics / "metrics.jsonl",
+            )
+            call(name + ":before", boundary, "before")
+        if mode == "deep":
+            for role, url in servers.items():
+                profiles[role] = url
+                action = "start_profile"
+                call(f"{name}:{action}:{role}", control, role, url, action)
+        measurement = loadgen + flags(warmup_per_endpoint=0, out_dir=folder)
+        yield measurement
+    finally:
+        for role, url in profiles.items():
+            action = "stop_profile"
+            cleanup(f"{name}:{action}:{role}", control, role, url, action)
+        if "scrape" in monitors.processes:
+            cleanup(name + ":after", boundary, "after")
+            cleanup(name + ":scrape_stop", monitors.stop, "scrape")
+
+
+def execute(args, forwarded, service, workloads, argv):
+    root, mode = args.run_dir, args.mode
+    data = dict(argv=argv, workloads=workloads, mode=mode, steps=[])
+    data.update(configuration=args.configuration, analysis_status="PENDING")
+    traced = mode in ("trace", "deep")
+    try:
+        with service_session(args, forwarded, service, data) as session:
+            config, monitors, call, cli, endpoints = session
+            expected = {role: set() for role in config["endpoints"] if role != "proxy"}
+            for work in workloads:
+                name, folder = work["name"], root / work["name"]
+                with workload_session(
+                    work, config, folder, mode, monitors, call, cli, endpoints
+                ) as measurement:
+                    cli(name + ":measure", measurement)
+                if traced:
+                    text = (folder / "requests.jsonl").read_text()
+                    wanted = expected_ids(map(json.loads, text.splitlines()), config)
+                    for role, ids in wanted.items():
+                        expected[role].update(ids)
+            if traced:
+                result = call("span_wait", wait_for_spans, root, expected)
+                if not result["complete"]:
+                    data["analysis_status"] = "INCOMPLETE"
+                    log.log_line("span_wait", f"missing: {result['missing']}")
+    except (Exception, KeyboardInterrupt):
+        if "error" not in data:
+            raise
+    cleanup_cli = partial(stage_functions(root, data)[1], optional=True)
     for work in workloads:
         analysis = Path(__file__).with_name("analysis.py")
         if analysis.exists():
@@ -257,26 +292,39 @@ def execute(args, forwarded, service, workloads, argv):
     return int(failed or data["analysis_status"] == "INCOMPLETE")
 
 
-def main(argv=None):
+def parse_args(argv=None, *, single=False):
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--configuration", choices=("baseline", "pdd"), required=True)
+    if single:
+        parser.set_defaults(mode="none")
+    else:
+        parser.add_argument(
+            "--mode", choices=("none", "monitor", "trace", "deep"), required=True
+        )
+    parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument(
-        "--mode", choices=("none", "monitor", "trace", "deep"), required=True
+        "--workload" if single else "--workloads",
+        dest="workloads",
+        type=Path,
+        required=True,
     )
-    for name in ("run-dir", "workloads"):
-        parser.add_argument("--" + name, type=Path, required=True)
     args, forwarded = parser.parse_known_args(argv)
     root = args.run_dir = args.run_dir.expanduser().resolve()
     if root.is_relative_to(REPO) or (root.exists() and any(root.iterdir())):
         raise ValueError("run-dir must be empty and outside repository")
     workloads = json.loads(args.workloads.read_text())
+    workloads = [workloads] if single else workloads
     validate_workloads(workloads, args.configuration)
     forwarded += flags(configuration=args.configuration, run_dir=root / "service")
     service = orchestrate.parse_args(["start", *forwarded])
     if service.cache_dir and service.cache_dir.resolve().is_relative_to(REPO):
         raise ValueError("cache-dir must be outside repository")
-    return execute(args, forwarded, service, workloads, argv)
+    return args, forwarded, service, workloads, argv
+
+
+def main(argv=None):
+    return execute(*parse_args(argv))
 
 
 if __name__ == "__main__":
