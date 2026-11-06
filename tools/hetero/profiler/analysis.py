@@ -285,6 +285,7 @@ def analyze(service_run, workload):
     result.update(
         server={}, transfer={}, memory_bandwidth={}, phase_resources={}, energy={}
     )
+    anchors = []
     if mode != "none" and rows:
         links = json.loads((root / "links.json").read_text())
         loadgen = json.loads((folder / "loadgen_run.json").read_text())
@@ -304,7 +305,7 @@ def analyze(service_run, workload):
         tokens = result["client"]["summary"]["actual_output_tokens_total"]["value"]
         result["energy"] = resources.energy_efficiency(power, window, tokens)
     result["request_phase_share"] = resources.request_phase_share(
-        rows, ids, spans, result["transfer"], trace
+        rows, ids, spans, events, anchors, trace
     )
     result["other_seconds"] = server.metric(None, "s", "M12", "미구현(후속)")
     profile = folder / "profile"

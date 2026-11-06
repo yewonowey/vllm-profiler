@@ -8,6 +8,25 @@ from tools.hetero.profiler import analysis, resources, server, transfer
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_exclusive_phase_shares(self):
+        cases = [
+            ("p_queue", (-1, 3), 0.1),
+            ("p_prefill", (1, 6), 0.1),
+            ("kv_transfer", (2, 7), 0.1),
+            ("layout", (3, 8), 0.3),
+            ("d_queue", (2, 9), 0.0),
+            ("decode", (6, 11), 0.4),
+        ]
+        parts = {name: span for name, span, _ in cases}
+        result = resources.exclusive_phase_shares(parts, (0, 10))
+        for name, _, value in cases:
+            self.assertAlmostEqual(result[name], value, msg=name)
+        self.assertAlmostEqual(sum(result.values()), 1)
+        self.assertGreaterEqual(result["other"], 0)
+        self.assertAlmostEqual(
+            resources.exclusive_phase_shares(parts, (0, 12))["other"], 1 / 12
+        )
+
     def test_boundary_deltas(self):
         def histogram(count, total):
             return f"# TYPE delay histogram\ndelay_count {count}\ndelay_sum {total}\n"

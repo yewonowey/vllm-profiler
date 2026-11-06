@@ -15,6 +15,16 @@ DEVICE_METRICS = dict(
 ROLE_DEVICE = dict(prefill="gpu", decode0="npu0", decode1="npu1")
 
 
+COLUMN_DOCS = {
+    "request_phase_share": """Trace: clip to [send, completed]; assign each
+instant once: decode > layout (H2D+reorder) > kv_transfer > prefill > server queues.
+B0: queue/prefill/decode; PDD: p_queue/p_prefill/kv_transfer/layout/d_queue/decode.
+Queue ties: D before P. Other is the uncovered service interval; shares sum to 1.
+Monitor: first-token/after-first-token approximation. Summary: request mean.
+M06-M10 retain their original overlapping elapsed times."""
+}
+
+
 def union(intervals):
     result = []
     for a, b in sorted(intervals):
@@ -107,15 +117,16 @@ def read_samples(collected, links, window):
     return series
 
 
+def mono(ns, anchors):
+    anchor = min(anchors, key=lambda x: abs(x["time_ns"] - ns))
+    return (ns - anchor["time_ns"] + anchor["monotonic_ns"]) / 1e9
+
+
 def phase_intervals(rows, ids, spans, events, anchors, trace):
     phases = {d: {} for d in DEVICES}
 
     def add(role, phase, a, b):
         phases[ROLE_DEVICE.get(role, role)].setdefault(phase, []).append((a, b))
-
-    def mono(ns):
-        anchor = min(anchors, key=lambda x: abs(x["time_ns"] - ns))
-        return (ns - anchor["time_ns"] + anchor["monotonic_ns"]) / 1e9
 
     for role, names in ids.items():
         for row in rows:
@@ -131,7 +142,10 @@ def phase_intervals(rows, ids, spans, events, anchors, trace):
                 if span is None:
                     continue
                 # vLLM 0.22 output_processor.py:730-747: span arrival + TTFT.
-                first = mono(span["start"]) + span["gen_ai.latency.time_to_first_token"]
+                first = (
+                    mono(span["start"], anchors)
+                    + span["gen_ai.latency.time_to_first_token"]
+                )
                 send = first - span["gen_ai.latency.time_in_model_prefill"]
                 end = first + span["gen_ai.latency.time_in_model_decode"]
             if not role.startswith("decode"):
@@ -152,7 +166,19 @@ def phase_intervals(rows, ids, spans, events, anchors, trace):
     return phases
 
 
-def request_phase_share(rows, ids, spans, transfers, trace):
+def exclusive_phase_shares(parts, window):
+    order = ("decode", "layout", "kv_transfer", "p_prefill", "prefill")
+    order += ("d_queue", "p_queue", "queue")
+    parts = {key: parts[key] for key in order if key in parts}
+    points = {max(window[0], min(t, window[1])) for ab in parts.values() for t in ab}
+    seconds = dict.fromkeys([*parts, "other"], 0.0)
+    for a, b in pairwise(sorted(points | set(window))):
+        phase = next((p for p, (x, y) in parts.items() if x <= a < b <= y), "other")
+        seconds[phase] += b - a
+    return {p: s / (window[1] - window[0]) for p, s in seconds.items()}
+
+
+def request_phase_share(rows, ids, spans, events, anchors, trace):
     requests = {}
     source = "spans+events" if trace else "requests.jsonl"
     status = "measured" if trace else "estimated"
@@ -162,35 +188,44 @@ def request_phase_share(rows, ids, spans, transfers, trace):
         first = row["first_output_monotonic"] - row["actual_send_monotonic"]
         parts = dict(first_token=first, after_first_token=duration - first)
         roles = [r for r, names in ids.items() if row["request_id"] in names]
+        ratios = {k: v / duration for k, v in parts.items()}
         if trace:
-            parts = {k: [] for k in server.LATENCIES}
+            selected = {
+                r: [
+                    e
+                    for e in events.get(r, [])
+                    if expected.engine_request_base(e.get("req_id")) == rid
+                ]
+                for r in roles
+            }
+            phases = phase_intervals([row], ids, spans, selected, anchors, True)
+            parts = {p: ab[0] for device in phases.values() for p, ab in device.items()}
+            pdd = "prefill" in roles
+            if pdd:
+                parts["p_prefill"] = parts.pop("prefill", None)
+                for key in ("layout", "kv_transfer"):
+                    parts.setdefault(key, None)
             for role in roles:
+                key = "p_queue" if role == "prefill" else "d_queue" if pdd else "queue"
                 span = spans.get(role, {}).get(rid, {})
-                for key, attr in server.LATENCIES.items():
-                    excluded = {
-                        "prefill": ("decode0", "decode1"),
-                        "decode": ("prefill",),
-                    }
-                    if role not in excluded.get(key, ()):
-                        parts[key].append(span.get("gen_ai.latency." + attr))
-            parts = {k: sum(v) if None not in v else None for k, v in parts.items()}
-            for role in (r for r in roles if r.startswith("decode")):
-                event = transfers[role]["requests"].get(rid, {})
-                for key in ("kv", "h2d", "reorder"):
-                    parts[key] = event.get(key, {}).get("value")
-            parts["other"] = (
-                duration - sum(parts.values()) if None not in parts.values() else None
+                queue = span.get("gen_ai.latency.time_in_queue")
+                start = mono(span["start"], anchors) if span else 0
+                parts[key] = (start, start + queue) if queue is not None else None
+            window = row["actual_send_monotonic"], row["completed_monotonic"]
+            ratios = (
+                exclusive_phase_shares(parts, window)
+                if None not in parts.values()
+                else None
             )
-        ratios = None
-        if None not in parts.values():
-            ratios = {k: v / duration for k, v in parts.items()}
         requests[row["request_id"]] = metric(ratios, "ratio", source, status=status)
     values = [node["value"] for node in requests.values()]
     summary = None
     if values and None not in values:
         summary = {k: mean(v[k] for v in values) for k in values[0]}
     return dict(
-        requests=requests, summary=metric(summary, "ratio", source, status=status)
+        definition=COLUMN_DOCS["request_phase_share"],
+        requests=requests,
+        summary=metric(summary, "ratio", source, status=status),
     )
 
 
