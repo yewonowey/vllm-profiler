@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 import json
-from itertools import pairwise
 from statistics import mean
 
 from tools.hetero.profiler import expected, server
-from tools.hetero.profiler.server import metric
+from tools.hetero.profiler.common import (
+    active_ratio,
+    attribute_samples,
+    interval_segments,
+    metric,
+)
+from tools.hetero.profiler.common import union as union
 
 DEVICES = ("gpu", "npu0", "npu1")
 DEVICE_METRICS = dict(
@@ -25,58 +30,16 @@ M06-M10 retain their original overlapping elapsed times."""
 }
 
 
-def union(intervals):
-    result = []
-    for a, b in sorted(intervals):
-        if b > a:
-            if result and a <= result[-1][1]:
-                result[-1] = (result[-1][0], max(b, result[-1][1]))
-            else:
-                result.append((a, b))
-    return result
-
-
-def active_ratio(intervals, window):
-    clipped = [(max(a, window[0]), min(b, window[1])) for a, b in intervals]
-    return sum(b - a for a, b in union(clipped)) / (window[1] - window[0])
-
-
 def device_states(phases, window):
-    edges = [t for group in phases.values() for ab in group for t in ab]
-    points = {max(window[0], min(t, window[1])) for t in edges}
+    intervals = (ab for group in phases.values() for ab in group)
     result = {}
-    for a, b in pairwise(sorted(points | set(window))):
+    for a, b in interval_segments(intervals, window):
         active = {
             p for p, spans in phases.items() if any(x < b and y > a for x, y in spans)
         }
         state = "mixed" if len(active) > 1 else next(iter(active), "idle")
         result.setdefault(state, []).append((a, b))
     return result
-
-
-def attribute_samples(points, intervals, linear=False):
-    """Integrate adjacent samples without extrapolation or bridging missing values."""
-    intervals = union(intervals)
-    total, covered, maxima = 0, 0, []
-    for (a, va), (b, vb) in pairwise(sorted(points)):
-        # At 1 Hz, a gap beyond 1.5 periods is uncovered, not interpolated.
-        if None in (va, vb) or not 0 < b - a <= 1.5:
-            continue
-        for start, end in intervals:
-            lo, hi = max(start, a), min(end, b)
-            if hi > lo:
-                left = va + (vb - va) * (lo - a) / (b - a) if linear else va
-                right = va + (vb - va) * (hi - a) / (b - a) if linear else va
-                total += (left + right) / 2 * (hi - lo)
-                covered += hi - lo
-                maxima.extend((left, right))
-    for t, v in points:
-        if v is not None and any(a <= t <= b for a, b in intervals):
-            maxima.append(v)
-    duration = sum(b - a for a, b in intervals)
-    avg = total / covered if covered else None
-    coverage = covered / duration if duration else 0
-    return avg, max(maxima, default=None), coverage, total
 
 
 def classify_devices(text, links):
@@ -170,9 +133,8 @@ def exclusive_phase_shares(parts, window):
     order = ("decode", "layout", "kv_transfer", "p_prefill", "prefill")
     order += ("d_queue", "p_queue", "queue")
     parts = {key: parts[key] for key in order if key in parts}
-    points = {max(window[0], min(t, window[1])) for ab in parts.values() for t in ab}
     seconds = dict.fromkeys([*parts, "other"], 0.0)
-    for a, b in pairwise(sorted(points | set(window))):
+    for a, b in interval_segments(parts.values(), window):
         phase = next((p for p, (x, y) in parts.items() if x <= a < b <= y), "other")
         seconds[phase] += b - a
     return {p: s / (window[1] - window[0]) for p, s in seconds.items()}

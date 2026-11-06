@@ -5,7 +5,7 @@ from pathlib import Path
 from statistics import mean
 
 from tools.hetero.profiler import expected, resources, server
-from tools.hetero.profiler.server import metric
+from tools.hetero.profiler.common import active_ratio, metric
 
 COPY_SYNC_CONFIRMED = False  # TODO(verify: H4): copy_ completion semantics.
 SOURCE = "rbln_metrics/events_*.jsonl"
@@ -163,7 +163,7 @@ def transfer_metrics(config, rows, events, servers, links, window):
         data["device_seconds"] = metric(value, "s", SOURCE, DEVICE_REASON)
         data["npu_device_time_ratio"] = device_time_ratio(steps, window)
         intervals = [(s["span_start_ns"] / 1e9, s["span_end_ns"] / 1e9) for s in steps]
-        ratio = resources.active_ratio(intervals, window) if steps else None
+        ratio = active_ratio(intervals, window) if steps else None
         result[role]["npu_step_window_ratio"] = metric(
             ratio, "ratio", SOURCE, status="estimated"
         )

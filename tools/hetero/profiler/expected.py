@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from tools.hetero.loadgen import request_succeeded
+from tools.hetero.profiler.common import live_rows
 from tools.hetero.profiler.scrape import wait_until
 
 
@@ -48,12 +49,6 @@ def expected_ids(rows, config):
                 raise ValueError(f"unknown request role: {role}")
             expected[role].add(row["request_id"])
     return expected
-
-
-def live_rows(path):
-    if path.exists():
-        with path.open(encoding="utf-8") as handle:
-            yield from (json.loads(line) for line in handle if line.endswith("\n"))
 
 
 def attribute(item, key):

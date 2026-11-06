@@ -13,17 +13,17 @@ if __package__ is None:
     sys.path[0] = str(Path(__file__).resolve().parents[3])
 
 from tools.hetero.profiler import expected, log, resources, server, transfer
+from tools.hetero.profiler.common import live_rows
+from tools.hetero.profiler.common import metric as shared_metric
 from tools.hetero.profiler.expected import request_succeeded
 
 KV_KINDS = ("kv_xfer_start", "kv_xfer_done", "kv_h2d")
 
 
 def metric(value, unit="s", reason="missing_raw"):
-    status = "not_collected" if value is None else "measured"
-    reason = reason if value is None else None
-    return dict(
-        value=value, status=status, reason=reason, source="requests.jsonl", unit=unit
-    )
+    # Preserve the client metric signature and serialized field order.
+    node = shared_metric(value, unit, "requests.jsonl", reason)
+    return {k: node[k] for k in ("value", "status", "reason", "source", "unit")}
 
 
 def validate_raw(folder, rows, config):
@@ -145,7 +145,7 @@ def join_requests(root, rows, config, spans=None, events=None, window=(0, 0)):
         names = {expected.server_request_id(rid) for rid in names}
         wanted.update((role, rid, kind) for rid in names for kind in kinds[role])
     seen, unmatched = Counter(), Counter()
-    for batch in expected.live_rows(root / "otel" / "traces.jsonl"):
+    for batch in live_rows(root / "otel" / "traces.jsonl"):
         for resource in batch.get("resourceSpans", []):
             role = expected.attribute(resource.get("resource", {}), "service.name")
             for scope in resource.get("scopeSpans", []):
@@ -166,7 +166,7 @@ def join_requests(root, rows, config, spans=None, events=None, window=(0, 0)):
             events[role] = []
         names = {expected.server_request_id(rid) for rid in ids[role]}
         for path in (root / "rbln_metrics" / role).glob("events_*.jsonl"):
-            for event in expected.live_rows(path):
+            for event in live_rows(path):
                 rid, kind = event.get("req_id"), event["kind"]
                 base = expected.engine_request_base(rid)
                 start = event.get("span_start_ns", 0) / 1e9
@@ -237,7 +237,7 @@ def analyze(service_run, workload):
     log.RUN_ID = root.name
     mode = json.loads((root / "run.json").read_text())["mode"]
     config = expected.service_config(root)
-    rows = list(expected.live_rows(folder / "requests.jsonl"))
+    rows = list(live_rows(folder / "requests.jsonl"))
     workload_config = json.loads((folder / "config.json").read_text())
     result = validate_raw(folder, rows, workload_config)
     ids, spans, events = expected.expected_ids(rows, config), {}, {}
@@ -245,7 +245,7 @@ def analyze(service_run, workload):
     start = min((r["scheduled_arrival_monotonic"] for r in rows), default=0)
     window = start, max((r["completed_monotonic"] for r in rows), default=start)
     collected, boundaries = [
-        list(expected.live_rows(folder / "monitor" / f"{k}.jsonl"))
+        list(live_rows(folder / "monitor" / f"{k}.jsonl"))
         for k in ("metrics", "boundaries")
     ]
     result["analysis_status"] = "NOT_COLLECTED"
@@ -307,7 +307,7 @@ def analyze(service_run, workload):
     result["request_phase_share"] = resources.request_phase_share(
         rows, ids, spans, events, anchors, trace
     )
-    result["other_seconds"] = server.metric(None, "s", "M12", "미구현(후속)")
+    result["other_seconds"] = shared_metric(None, "s", "M12", "미구현(후속)")
     profile = folder / "profile"
     profile.mkdir(exist_ok=True)
     records = [

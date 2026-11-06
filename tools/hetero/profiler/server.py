@@ -3,6 +3,8 @@ from statistics import mean
 
 from prometheus_client.parser import text_string_to_metric_families
 
+from tools.hetero.profiler.common import attribute_samples, metric
+
 BOUNDARY = "monitor/boundaries.jsonl"
 TRACE = "otel/traces.jsonl"
 SERIES = "monitor/metrics.jsonl"
@@ -18,13 +20,6 @@ GAUGES = dict(
     avg_running_requests="num_requests_running",
     waiting_requests="num_requests_waiting",
 )
-
-
-def metric(value, unit, source, reason="missing_raw", status="measured", **extra):
-    status = status if value is not None else "not_collected"
-    node = dict(value=value, unit=unit, source=source, status=status)
-    node.update(reason=reason if value is None else None, **extra)
-    return node
 
 
 def samples(text):
@@ -62,8 +57,6 @@ def boundary_deltas(before, after):
 
 
 def server_metrics(boundaries, collected, spans, trace, window, roles):
-    from tools.hetero.profiler.resources import attribute_samples
-
     result = {}
     source = TRACE if trace else BOUNDARY
     for role in roles:
