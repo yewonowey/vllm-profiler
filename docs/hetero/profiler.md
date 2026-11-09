@@ -143,3 +143,54 @@ scrape는 endpoint별 HTTP 요청을 병렬로 수행하고, 응답을 JSONL로 
 H1의 실서비스 기동·정지, H2의 all-smi 수집, H3의 links 정보,
 H6의 deep 프로파일 생성 및 정지 경계.
 mock 자체의 세부 동작 시험은 **생략(HW 확인으로 대체)**한다.
+
+## WP11 스윕과 결과표
+
+CUDA Python으로 실행하고 `CUDA_PY`, `RBLN_PY`를 환경변수로 전달한다.
+시나리오의 `service_args`는 서비스 옵션 이름과 값의 객체이며, 실제 모델 경로는
+반복 가능한 `--model KEY=PATH`로만 전달한다. 출력과 공유 캐시는 저장소 밖에 둔다.
+
+```bash
+"$CUDA_PY" -m tools.hetero.profiler.sweep \
+  --scenarios tools/hetero/scenarios/initial.json --sweep-dir "$SWEEP_DIR" \
+  --model "qwen3-0.6b=$QWEN06_PATH" --model "qwen3-4b=$QWEN4_PATH" \
+  --model "qwen25-3b=$QWEN25_PATH"
+```
+
+`--only NAME`을 반복하면 선택한 시나리오만 실행한다. 쌍 검사는 전체 선언에 적용한다.
+`--cache-root`를 주면 서비스 조건별 해시 디렉터리를 사용하며 deep 캐시는 분리한다.
+**TODO(verify: H7)**: 공유 캐시의 컴파일 호환성은 HW 확인이 필요하다.
+성공한 시나리오는 재개 시 건너뛰고, 실패한 실행은 `_1`, `_2` 접미사로 보존한다.
+선언을 바꾸면 새 sweep 디렉터리를 사용한다. `scenarios.json`에 시도·종료 코드를 기록하고,
+`inputs/`에 workload 입력과 실행 로그를 보관한다. 시도별 표는 실패·미실행 행도 포함한다.
+
+종료 시 `finalize_results.py --sweep-dir "$SWEEP_DIR"`를 호출한다.
+`results.csv`의 클라이언트 지표는 수치 칸과 `client_metrics`의 정확도 메타데이터를 함께 제공한다.
+서버·전송·자원·에너지 칸과 dataset의 중첩 셀은 JSON이다. 단위·출처·미수집 사유를 보존한다.
+정합성은 workload 또는 profile의 `correctness.json`이 있을 때만 읽는다.
+실패한 쌍은 비교 계산에서 제외하고, S7의 출력 비교는 완전한 저장 토큰 ID가 있어야 수행한다.
+
+### S6 pilot과 요청 수 확정
+
+`initial.json`의 시간은 S1·S2 실측 요청당 시간에 길이·배치·동시성 비율을 적용한 추정이다.
+`estimation`에 근거·예상 시간·출력 토큰/s만 적용했을 때의 시간을 함께 남긴다.
+Qwen3-4B는 미실측이므로 0.6B를 임시 기준으로 사용한다. 실제 시간과 컴파일 가능성은 확인해야 한다.
+S6 prefill은 B0의 세 장치와 PDD GPU의 M07 역수로 처리 요청/s를 추정하고,
+decode는 S2 출력 처리량을 사용한다. 요청 수에는 25% 여유를 적용하고 16의 배수로 올렸다.
+S6의 512 상한 때문에 목표 시간을 보장할 수 없으므로 `pilot_adjust: true`를 유지한다.
+
+1. S6 두 시나리오의 각 workload 요청 수를 16으로 바꾼 임시 시나리오 JSON을 저장소 밖에 만든다.
+2. 새 pilot 디렉터리에서 아래처럼 S6만 실행한다. pilot 실행은 자동화하지 않는다.
+
+   ```bash
+   "$CUDA_PY" -m tools.hetero.profiler.sweep \
+     --scenarios "$PILOT_JSON" --sweep-dir "$PILOT_DIR" \
+     --model "qwen25-3b=$QWEN25_PATH" --only s6_b0 --only s6_pdd
+   ```
+
+3. 각 workload의 두 구성 모두 PASS인지 확인하고 summary의 makespan(s)으로
+   `N = min(512, ceil(120 * 16 / min(B0 makespan, PDD makespan)))`을 계산한다.
+   빠른 구성 기준이며 같은 pair/workload의 요청 수는 동일하게 적용한다.
+   상한에 걸리면 예상 시간이 120초 미만일 수 있다는 점을 기록한다.
+4. `initial.json`의 S6 요청 수와 추정 근거를 갱신하고 `pilot_adjust`를 false로 바꾼 뒤 커밋한다.
+   본 스윕은 pilot과 다른 새 디렉터리에서 실행한다.
