@@ -384,8 +384,8 @@
       }
     },
     {
-      "name": "s3a_b8_b0",
-      "pair_id": "s3a_b8",
+      "name": "s3a_b2_b0",
+      "pair_id": "s3a_b2",
       "system": "B0",
       "comparison": "capacity",
       "configuration": "baseline",
@@ -395,10 +395,10 @@
         "dtype": "bfloat16",
         "kv_cache_dtype": "bfloat16",
         "max_model_len": 4352,
-        "max_num_seqs": 8,
+        "max_num_seqs": 2,
         "max_num_batched_tokens": 128,
         "block_size": 128,
-        "num_blocks": 320,
+        "num_blocks": 80,
         "layout_reorder": 0
       },
       "workloads": [
@@ -406,13 +406,13 @@
           "name": "i2048_o256",
           "input_tokens": 2048,
           "output_tokens": 256,
-          "requests": 48,
+          "requests": 32,
           "seed": 20260924,
           "warmup": 1,
           "slots": {
-            "gpu": 8,
-            "npu0": 8,
-            "npu1": 8
+            "gpu": 2,
+            "npu0": 2,
+            "npu1": 2
           }
         }
       ],
@@ -423,18 +423,19 @@
           "prefill_fraction": 0.055840467111462566,
           "formula": "reference seconds/request * weighted input/output scaling * batch/concurrency scaling",
           "assumption": "Stage/length and batch scaling are estimates, not measured durations.",
-          "seconds_per_request": 1.1419057589392836,
-          "expected_seconds": 54.811476429085616,
+          "seconds_per_request": 4.567623035757134,
+          "expected_seconds": 146.1639371442283,
           "requested_minimum_seconds": 30,
-          "output_rate_only_seconds": 112.77156118489802,
-          "uncapped_requests": 33,
+          "output_rate_only_seconds": 75.18104078993201,
+          "uncapped_requests": 32,
           "capped_at_512": false
         }
-      }
+      },
+      "notes": "배치 8 제외: B0 NPU 서버가 max_num_seqs=8에서 엔진 초기화 중 실패했다. vLLM 0.22.0의 apply_top_k_top_p는 HAS_TRITON and logits.shape[0] >= 8이면 Triton 경로를 쓰며, 그 경로가 부르는 num_compute_units가 RBLN 플랫폼에 구현돼 있지 않아 NotImplementedError가 발생했다. 이번 스윕의 PDD decode 전용 서버는 배치 8에서 성공했으나 B0 쌍이 없어 비교에서 제외한다."
     },
     {
-      "name": "s3a_b8_pdd",
-      "pair_id": "s3a_b8",
+      "name": "s3a_b2_pdd",
+      "pair_id": "s3a_b2",
       "system": "PDD",
       "comparison": "capacity",
       "configuration": "pdd",
@@ -444,10 +445,10 @@
         "dtype": "bfloat16",
         "kv_cache_dtype": "bfloat16",
         "max_model_len": 4352,
-        "max_num_seqs": 8,
+        "max_num_seqs": 2,
         "max_num_batched_tokens": 128,
         "block_size": 128,
-        "num_blocks": 320,
+        "num_blocks": 80,
         "layout_reorder": 0
       },
       "workloads": [
@@ -455,10 +456,10 @@
           "name": "i2048_o256",
           "input_tokens": 2048,
           "output_tokens": 256,
-          "requests": 48,
+          "requests": 32,
           "seed": 20260924,
           "warmup": 1,
-          "concurrency": 16
+          "concurrency": 4
         }
       ],
       "estimation": {
@@ -468,14 +469,15 @@
           "prefill_fraction": 0.01363559652019422,
           "formula": "reference seconds/request * weighted input/output scaling * batch/concurrency scaling",
           "assumption": "Stage/length and batch scaling are estimates, not measured durations.",
-          "seconds_per_request": 2.035972308148077,
-          "expected_seconds": 97.7266707911077,
+          "seconds_per_request": 8.143889232592308,
+          "expected_seconds": 260.60445544295385,
           "requested_minimum_seconds": 30,
-          "output_rate_only_seconds": 196.79505053535104,
-          "uncapped_requests": 33,
+          "output_rate_only_seconds": 131.1967003569007,
+          "uncapped_requests": 32,
           "capped_at_512": false
         }
-      }
+      },
+      "notes": "배치 8 제외: B0 NPU 서버가 max_num_seqs=8에서 엔진 초기화 중 실패했다. vLLM 0.22.0의 apply_top_k_top_p는 HAS_TRITON and logits.shape[0] >= 8이면 Triton 경로를 쓰며, 그 경로가 부르는 num_compute_units가 RBLN 플랫폼에 구현돼 있지 않아 NotImplementedError가 발생했다. 이번 스윕의 PDD decode 전용 서버는 배치 8에서 성공했으나 B0 쌍이 없어 비교에서 제외한다."
     },
     {
       "name": "s3b_c2_b0",
