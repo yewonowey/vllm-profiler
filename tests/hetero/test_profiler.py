@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+import gzip
 import json
 import tempfile
 import unittest
@@ -98,6 +99,7 @@ class ProfilerTests(unittest.TestCase):
                         "capture_links",
                         "wait_for_layout",
                         "profile_control",
+                        "wait_for_traces",
                         "boundary_snapshot",
                     ),
                     lambda *_: None,
@@ -119,6 +121,7 @@ class ProfilerTests(unittest.TestCase):
                 self.assertEqual(result, int(fail))
                 data = json.loads((root / "run.json").read_text())
                 steps = [s for s in CASE["steps"] if not (fail and s == "span_wait")]
+                steps.insert(steps.index("w:scrape_stop") + 1, "w:trace_wait")
                 steps += ["w:analysis"]
                 self.assertEqual([s["name"] for s in data["steps"]], steps)
                 for process in fake.processes:
@@ -126,3 +129,24 @@ class ProfilerTests(unittest.TestCase):
                     process.wait.assert_called_once()
                 for line in output.getvalue().splitlines():
                     assert_log_line(self, line)
+
+    def test_trace_completion(self):
+        trace = gzip.compress(b"{}")
+        cases = [(trace, True), (trace[:-8], False), (b"", False), (None, False)]
+        for content, ok in cases:
+            with self.subTest(ok=ok), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                (root / "gpu").mkdir()
+                if content is not None:
+                    (root / "gpu/trace.json.gz").write_bytes(content)
+                data: dict = {"steps": []}
+                with (
+                    patch.object(run.time, "monotonic", side_effect=range(200)),
+                    patch.object(run.time, "sleep"),
+                    run.recorded(root, data, "trace_wait", optional=True),
+                ):
+                    run.wait_for_traces(root, ["gpu"], set(), timeout=8)
+                row = json.loads((root / "run.json").read_text())["steps"][0]
+                self.assertEqual(row["ok"], ok)
+                if not ok:
+                    self.assertIn("gpu", row["error"])

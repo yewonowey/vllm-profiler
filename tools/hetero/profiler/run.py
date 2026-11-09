@@ -2,11 +2,13 @@
 """Run one service session and its workloads; see docs/hetero/profiler.md."""
 
 import argparse
+import gzip
 import json
 import re
 import subprocess
 import sys
 import time
+import zlib
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
@@ -19,7 +21,7 @@ from tools.hetero import orchestrate
 from tools.hetero.profiler import log
 from tools.hetero.profiler.expected import expected_ids, service_config, wait_for_spans
 from tools.hetero.profiler.monitors import Monitors, wait_for_layout
-from tools.hetero.profiler.scrape import append_rows, boundary_snapshot
+from tools.hetero.profiler.scrape import append_rows, boundary_snapshot, wait_until
 from tools.hetero.profiler.tools import capture_links, check_tools
 
 REPO = Path(__file__).resolve().parents[3]
@@ -125,6 +127,42 @@ def profile_control(out, role, url, action):
         append_rows(out, [row])
 
 
+def wait_for_traces(root, roles, previous, timeout=120):
+    sizes, changed, pending = {}, time.monotonic(), []
+
+    def complete():
+        nonlocal sizes, changed, pending
+        files = sorted(set(root.rglob("*.gz")) - previous)
+        current = {p: p.stat().st_size for p in files}
+        if current != sizes:
+            sizes, changed = current, time.monotonic()
+        pending = [
+            f"{role}: no new gzip trace"
+            for role in roles
+            if not any(p.parent.name == role for p in files)
+        ]
+        if time.monotonic() - changed < 3:
+            pending += [f"{p.relative_to(root)}: size not stable for 3s" for p in files]
+        else:
+            for path in files:
+                try:
+                    if not current[path]:
+                        raise EOFError("empty gzip trace")
+                    with gzip.open(path, "rb") as stream:
+                        while stream.read(1024 * 1024):
+                            pass
+                except (OSError, EOFError, zlib.error) as exc:
+                    pending.append(f"{path.relative_to(root)}: {exc}")
+        return not pending
+
+    try:
+        wait_until(complete, timeout, "torch traces")
+    except TimeoutError as exc:
+        raise TimeoutError(
+            f"torch traces: {timeout}s timeout; {'; '.join(pending)}"
+        ) from exc
+
+
 @contextmanager
 def recorded(root, data, name, optional=False):
     row = dict(name=name, start=time.monotonic_ns(), end=None, ok=False, error=None)
@@ -226,6 +264,8 @@ def workload_session(work, config, folder, mode, monitors, call, cli, endpoints)
     warmup += flags(out_dir=folder / "warmup")
     cli(name + ":warmup", loadgen + ["--warmup-only", *warmup])
     profiles = {}
+    traces = folder.parent / "torch_traces"
+    previous = set(traces.rglob("*.gz")) if mode == "deep" else set()
     try:
         if mode != "none":
             call(
@@ -249,6 +289,8 @@ def workload_session(work, config, folder, mode, monitors, call, cli, endpoints)
         if "scrape" in monitors.processes:
             cleanup(name + ":after", boundary, "after")
             cleanup(name + ":scrape_stop", monitors.stop, "scrape")
+        if profiles:
+            cleanup(name + ":trace_wait", wait_for_traces, traces, profiles, previous)
 
 
 def execute(args, forwarded, service, workloads, argv):

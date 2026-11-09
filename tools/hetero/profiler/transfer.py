@@ -34,6 +34,14 @@ def memory_bandwidth(config, steps, running, rows):
     weights = list(path.glob("*.safetensors"))
     steps = [s for s in steps if s["phase"] == "decode"]
     times = [s["device"] for s in steps]
+    host_timing = None in times
+    if host_timing:
+        times = [
+            (s["span_end_ns"] - s["span_start_ns"]) / 1e3
+            if s.get("span_end_ns") is not None and s.get("span_start_ns") is not None
+            else None
+            for s in steps
+        ]
     value, reason = None, "model_config_or_weights_missing"
     if (path / "config.json").is_file() and weights:
         model = json.loads((path / "config.json").read_text())
@@ -65,6 +73,10 @@ def memory_bandwidth(config, steps, running, rows):
     result["mem_bw_efficiency_est"] = metric(
         efficiency, "ratio", "NPU_MEM_BW_GBPS", reason, "estimated"
     )
+    if host_timing:
+        for node in result.values():
+            if node["value"] is not None:
+                node["reason"] = "device 시간 없음: 호스트 관측 구간 기준 하한 추정"
     return result
 
 

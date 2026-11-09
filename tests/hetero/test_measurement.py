@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tools.hetero.profiler import analysis, resources, server, transfer
 
@@ -147,5 +148,17 @@ class MeasurementTests(unittest.TestCase):
             (path / "model.safetensors").write_bytes(bytes(100))
             config = dict(model_path=temp, kv_cache_dtype="float16")
             steps = [dict(device=2e6, context_len_sum=3, phase="decode")]
-            result = transfer.memory_bandwidth(config, steps, None, [])
-            self.assertAlmostEqual(result["decode_mem_bw_gbps_est"]["value"], 98 / 1e9)
+            for device, seconds, wanted in ((None, 4, 49), (2e6, 4, 98)):
+                steps[0].update(
+                    device=device, span_start_ns=0, span_end_ns=seconds * 10**9
+                )
+                with patch.dict("os.environ", NPU_MEM_BW_GBPS="2"):
+                    result = transfer.memory_bandwidth(config, steps, None, [])
+                for key, divisor in zip(transfer.MEMORY_FIELDS, (1, 2)):
+                    self.assertAlmostEqual(result[key]["value"] * 1e9, wanted / divisor)
+                    self.assertEqual(result[key]["status"], "estimated")
+                    reason: str | None = (
+                        "device 시간 없음: 호스트 관측 구간 기준 하한 추정"
+                    )
+                    reason = reason if device is None else None
+                    self.assertEqual(result[key]["reason"], reason)
