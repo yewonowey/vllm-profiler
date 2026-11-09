@@ -1249,7 +1249,7 @@
           "name": "i4096_o1",
           "input_tokens": 4096,
           "output_tokens": 1,
-          "requests": 512,
+          "requests": 280,
           "seed": 20260924,
           "warmup": 1,
           "slots": {
@@ -1274,19 +1274,20 @@
       ],
       "estimation": {
         "i4096_o1": {
-          "reference": "s2_b0",
-          "prefill_seconds": {
-            "gpu": 0.36591547809075564,
-            "npu0": 1.708756684558466,
-            "npu1": 1.7095246193930507
+          "reference": "sweep_pilot_s6/results.csv and runs/s6_{b0,pdd}/i4096_o1/profile/summary.json",
+          "confirmed_date": "2026-11-09",
+          "pilot_requests": 16,
+          "pilot_makespan_seconds": {
+            "B0": 6.858987174928188,
+            "PDD": 7.472182720899582
           },
-          "formula": "1 / sum(1 / M07_role); no unmeasured batching multiplier",
-          "seconds_per_request": 0.25620986628391906,
-          "expected_seconds": 131.17945153736656,
+          "formula": "min(512, ceil(16 * 120 / min(B0_makespan, PDD_makespan)))",
+          "seconds_per_request": 0.42868669843301177,
+          "expected_seconds": 120.0322755612433,
           "requested_minimum_seconds": 120,
-          "output_rate_only_seconds": 4.698815049370751,
-          "uncapped_requests": 586,
-          "capped_at_512": true
+          "uncapped_requests": 280,
+          "capped_at_512": false,
+          "note": "Linear extrapolation from the 16-request pilot; expected duration is estimated."
         },
         "i32_o4096": {
           "reference": "s2_b0",
@@ -1302,7 +1303,11 @@
           "capped_at_512": false
         }
       },
-      "pilot_adjust": true
+      "pilot_adjust": false,
+      "pilot_resolution": {
+        "date": "2026-11-09",
+        "i32_o4096": "Keep 16 requests unchanged as requested. No decode pilot in sweep_pilot_s6; existing S2-based estimated durations exceed 120 seconds for both configurations. Pilot flag cleared by this decision, not by a new decode measurement."
+      }
     },
     {
       "name": "s6_pdd",
@@ -1327,7 +1332,7 @@
           "name": "i4096_o1",
           "input_tokens": 4096,
           "output_tokens": 1,
-          "requests": 512,
+          "requests": 280,
           "seed": 20260924,
           "warmup": 1,
           "concurrency": 8
@@ -1344,17 +1349,20 @@
       ],
       "estimation": {
         "i4096_o1": {
-          "reference": "s2_pdd",
-          "prefill_seconds": {
-            "prefill": 0.4184415879426524
+          "reference": "sweep_pilot_s6/results.csv and runs/s6_{b0,pdd}/i4096_o1/profile/summary.json",
+          "confirmed_date": "2026-11-09",
+          "pilot_requests": 16,
+          "pilot_makespan_seconds": {
+            "B0": 6.858987174928188,
+            "PDD": 7.472182720899582
           },
-          "formula": "1 / sum(1 / M07_role); no unmeasured batching multiplier",
-          "seconds_per_request": 0.4184415879426524,
-          "expected_seconds": 214.24209302663803,
+          "formula": "min(512, ceil(16 * 120 / min(B0_makespan, PDD_makespan)))",
+          "seconds_per_request": 0.46701142005622387,
+          "expected_seconds": 130.76319761574268,
           "requested_minimum_seconds": 120,
-          "output_rate_only_seconds": 8.199793772306293,
-          "uncapped_requests": 586,
-          "capped_at_512": true
+          "uncapped_requests": 280,
+          "capped_at_512": false,
+          "note": "Linear extrapolation from the 16-request pilot; expected duration is estimated."
         },
         "i32_o4096": {
           "reference": "s2_pdd",
@@ -1370,7 +1378,11 @@
           "capped_at_512": false
         }
       },
-      "pilot_adjust": true
+      "pilot_adjust": false,
+      "pilot_resolution": {
+        "date": "2026-11-09",
+        "i32_o4096": "Keep 16 requests unchanged as requested. No decode pilot in sweep_pilot_s6; existing S2-based estimated durations exceed 120 seconds for both configurations. Pilot flag cleared by this decision, not by a new decode measurement."
+      }
     },
     {
       "name": "s7_pdd_r0",
