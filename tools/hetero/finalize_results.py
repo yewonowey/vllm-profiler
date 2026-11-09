@@ -2,6 +2,7 @@
 """Export profiler summaries and raw observations from a sweep."""
 
 import argparse
+import csv
 import sys
 from pathlib import Path
 
@@ -294,7 +295,7 @@ def datasets(records):
     return tables
 
 
-def finalize(root):
+def finalize(root, opprofile_dir=None):
     root = outside_repo(root)
     scenarios = read_json(root / "scenarios.json")["scenarios"]
     records = []
@@ -316,6 +317,16 @@ def finalize(root):
             log_line("finalize", str(exc))
     compared = comparisons(valid)
     tables = datasets(records)
+    if opprofile_dir is not None:
+        for path in sorted(Path(opprofile_dir).rglob("operators.csv")):
+            if path.resolve() == (root / "dataset/operators.csv").resolve():
+                continue
+            with path.open() as stream:
+                rows = [
+                    dict(r, operator_source=str(path.relative_to(opprofile_dir)))
+                    for r in csv.DictReader(stream)
+                ]
+            tables.setdefault("operators", []).extend(rows)
     out = root / "dataset"
     out.mkdir(exist_ok=True)
     write_csv(root / "results.csv", tables["runs"])
@@ -347,7 +358,9 @@ def finalize(root):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sweep-dir", type=Path, required=True)
-    return finalize(parser.parse_args(argv).sweep_dir)
+    parser.add_argument("--opprofile-dir", type=Path)
+    args = parser.parse_args(argv)
+    return finalize(args.sweep_dir, args.opprofile_dir)
 
 
 if __name__ == "__main__":

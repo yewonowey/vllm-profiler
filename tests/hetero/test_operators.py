@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: Apache-2.0
+import csv
+import gzip
+import json
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from tools.hetero import finalize_results
+from tools.hetero.profiler import operator_stats as ops
+
+
+class OperatorTests(unittest.TestCase):
+    def test_aggregate(self):
+        cat = "kernel"
+        cases = [("a", cat, 2), ("a", cat, 4), ("b", cat, 3), ("a", "cpu_op", 8)]
+        rows = [
+            dict(name=n, category=c, start_ns=0, duration_ns=d * 1000)
+            for n, c, d in cases
+        ]
+        for top, count in [(1, 2), (2, 3)]:
+            result = ops.aggregate(rows, top)
+            self.assertEqual(len(result), count)
+            a = next(
+                r for r in result if r["category"] == "kernel" and r["name"] == "a"
+            )
+            self.assertEqual((a["calls"], a["total_ms"], a["mean_us"]), (2, 0.006, 3))
+            self.assertAlmostEqual(a["ratio"], 2 / 3)
+
+    def test_chrome_exports_and_finalize(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            step = "execute_context_0(0)_generation_4(4)"
+            cases = [
+                (step, "user_annotation", 10, 10, 1, 1),
+                ("launch", "cuda_runtime", 11, 1, 1, 1),
+                ("gemm", "kernel", 30, 2, 0, 7),
+            ]
+            columns = ["name", "cat", "ts", "dur", "pid", "tid"]
+            events = [
+                dict(zip(columns, row), ph="X", args={"correlation": 7})
+                for row in cases
+            ]
+            path = root / "rank0.pt.trace.json.gz"
+            path.write_bytes(
+                gzip.compress(json.dumps(dict(traceEvents=events)).encode())
+            )
+            rows = ops.chrome_rows(path)
+            self.assertEqual((rows[0]["duration_ns"], rows[0]["step"]), (2000, 0))
+            self.assertTrue(rows[0]["decode"])
+            (root / "meta.json").write_text(
+                json.dumps(dict(device="gpu", phase="decode", model="toy"))
+            )
+            out = root / "stats"
+            ops.main(["--input", str(root), "--out", str(out)])
+            self.assertTrue((out / "operators.md").is_file())
+            (root / "scenarios.json").write_text('{"scenarios": []}')
+            self.assertEqual(finalize_results.finalize(root, out), 0)
+            with (root / "dataset/operators.csv").open() as stream:
+                self.assertEqual(next(csv.DictReader(stream))["name"], "gemm")
+
+    @unittest.skipUnless(
+        os.getenv("PDD_TOOLS_PY") and os.getenv("PERFETTO_TP_BIN"), "tools unset"
+    )
+    def test_pb(self):
+        script = """
+import sys
+from pathlib import Path
+from perfetto.trace_builder.proto_builder import TraceProtoBuilder
+from tools.hetero.profiler.operator_stats import pb_rows
+b = TraceProtoBuilder()
+p = b.add_packet()
+p.track_descriptor.uuid = 1
+p.track_descriptor.name = "synthetic-device"
+for t, kind in [(1000, 1), (3000, 2)]:
+    p = b.add_packet()
+    p.timestamp, p.trusted_packet_sequence_id = t, 1
+    p.track_event.type, p.track_event.track_uuid = kind, 1
+    if kind == 1:
+        p.track_event.name = "op"
+        p.track_event.categories.append("device")
+f = Path(sys.argv[1])
+f.write_bytes(b.serialize())
+r = pb_rows(f)
+assert r[0]["track"] == "synthetic-device" and r[0]["duration_ns"] == 2000
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            subprocess.run(
+                [os.environ["PDD_TOOLS_PY"], "-c", script, str(Path(temp) / "test.pb")],
+                check=True,
+            )

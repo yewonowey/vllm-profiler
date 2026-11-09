@@ -194,3 +194,83 @@ S6의 512 상한 때문에 목표 시간을 보장할 수 없으므로 `pilot_ad
    상한에 걸리면 예상 시간이 120초 미만일 수 있다는 점을 기록한다.
 4. `initial.json`의 S6 요청 수와 추정 근거를 갱신하고 `pilot_adjust`를 false로 바꾼 뒤 커밋한다.
    본 스윕은 pilot과 다른 새 디렉터리에서 실행한다.
+
+## WP9: 오프라인 연산자 프로파일 / H6b
+
+initial.json의 S9 deep 서빙 시나리오는 제거했다. vLLM 0.22.0 온라인 AsyncLLM은
+멀티프로세스를 사용하므로, NPU Profiler의 인프로세스 제약에 맞춰 `LLM` API로
+장치 한 개씩 실행한다. 기존 run.py의 trace/deep 동작은 바꾸지 않는다.
+
+`opprofile.py`는 각 장치 venv에서 직접 실행한다. 입력은 prefill i4096/o1,
+decode i32/o256, 각각 4요청이다. 최대 길이가 부족하면 입력/출력 길이를 줄이고
+실제 길이를 meta.json에 남긴다. warm-up generate 뒤 start_profile → 본측정
+generate → stop_profile → EngineCore 종료 순서다. `phase`는 입력 유형이며,
+decode 실행에도 최초 prefill이 포함된다. 저장소 밖의 새 출력 폴더를 사용한다.
+
+GPU는 CUDA_VISIBLE_DEVICES=0, NPU는 RBLN_DEVICES=0으로 제한한다. NPU에
+RBLN_PROFILER=1, VLLM_ENABLE_V1_MULTIPROCESSING=0과 하네스 standalone NPU
+역할의 나머지 환경 설정을 적용한다. clean_base_env를 재사용하고, LLM에는
+model_impl="vllm"도 명시한다. 환경 설정은 vLLM import 전에 적용한다.
+현재 NPU worker는 start_profile을 위해 torch profiler_config도 요구하므로
+이를 함께 설정한다. NPU 장치 집계는 CPU trace가 아니라 별도의 .pb가 대상이다.
+
+근거: [RBLN v0.11.1 프로파일 가이드](https://docs.rbln.ai/v0.11.1/software/model_serving/vllm_support/features/profiler.html),
+[모델 구현과 RBLN Profiler 설명](https://docs.rbln.ai/v0.12.0/software/model_serving/vllm_support/features/profiler.html).
+설치 SDK의 실제 .pb 생성과 torch profiler 동시 사용은 H6b에서 확인해야 한다.
+
+### Qwen2.5-3B H6b 명령
+
+먼저 환경 파일을 불러오고 `MODEL_PATH`에는 로컬 Qwen2.5-3B-Instruct 스냅샷을
+지정한다. 실행 파일 경로는 문서에 고정하지 않는다. 다음 네 실행은 순차적으로 한다.
+
+```bash
+source ~/pdd-env.sh
+: "${MODEL_PATH:?Qwen2.5-3B-Instruct local model path required}"
+OP_OUT="${OP_OUT:-$HOME/pdd-results/h6b}"
+COMMON=(--model-path "$MODEL_PATH" --model-name Qwen/Qwen2.5-3B-Instruct
+        --dtype bfloat16 --kv-cache-dtype bfloat16 --max-model-len 4352
+        --max-num-seqs 4 --max-num-batched-tokens 128 --block-size 128 --num-blocks 160)
+"$CUDA_PY" tools/hetero/profiler/opprofile.py "${COMMON[@]}" --device gpu --phase prefill --out "$OP_OUT/gpu_prefill"
+"$CUDA_PY" tools/hetero/profiler/opprofile.py "${COMMON[@]}" --device gpu --phase decode --out "$OP_OUT/gpu_decode"
+"$RBLN_PY" tools/hetero/profiler/opprofile.py "${COMMON[@]}" --device npu --phase prefill --out "$OP_OUT/npu_prefill"
+"$RBLN_PY" tools/hetero/profiler/opprofile.py "${COMMON[@]}" --device npu --phase decode --out "$OP_OUT/npu_decode"
+```
+
+NPU의 cwd는 해당 --out이다. `rank_*/session_*/*.pb`를 포함한 재귀 파일 목록을
+meta.json에 남긴다. SDK 종료 시 생성된 파일도 atexit에서 다시 조회한다.
+meta.json의 PASS는 generate 성공을 뜻하며, 장치 trace 완전성 인증이 아니다.
+프로파일러가 자체적으로 warm-up/컴파일까지 수집했는지는 H6b에서 확인한다.
+
+```bash
+"$PDD_TOOLS_PY" tools/hetero/profiler/operator_stats.py \
+  --input "$OP_OUT/gpu_decode" --out "$OP_OUT/gpu_decode/stats"
+"$PDD_TOOLS_PY" tools/hetero/profiler/operator_stats.py \
+  --input "$OP_OUT/npu_decode" --out "$OP_OUT/npu_decode/stats"
+python3 tools/hetero/finalize_results.py --sweep-dir "$SWEEP_DIR" --opprofile-dir "$OP_OUT"
+```
+
+prefill도 위 input/out 이름을 바꿔 집계한다. operator_stats는 GPU JSON(.gz)을
+표준 라이브러리로, NPU .pb를 PERFETTO_TP_BIN SQL로 읽는다. 출력은 operators.csv/md,
+kernel_steps.csv, memory_bw.json, tracks.json이다. 카테고리별 상위20개를 내며
+비율의 분모는 선정 전 카테고리 전체의 inclusive 시간 합이다. 중첩 cpu_op의
+합을 장치 가동 시간으로 해석하지 않는다. finalize는 오프라인 CSV를
+model/device/phase와 출처를 보존해 dataset/operators.csv에 합친다.
+
+GPU decode의 스텝은 vLLM `execute_context_*_generation_*` 주석과 CUDA launch의
+correlation ID로 연결한다. context=0, generation>0인 스텝의 kernel 시간 합을
+kernel_steps.csv에 낸다. 미연결 커널은 스텝 합에서 제외되므로 H6b에서 연결률을
+확인해야 한다. 아직 스텝별 KV 문맥과 가중치 접근량을 검증하지 못해 GPU T06·T07은
+사유와 함께 not_collected로 남긴다. 이는 요청에서 허용한 후속 계산 항목이다.
+
+### H6b 확인 항목
+
+- NPU .pb 생성 여부와 실제 rank/session 경로, 정상 종료 후 파일 완성 여부.
+- tracks.json의 실제 장치 트랙·카테고리 이름. `operator_stats.NPU_DEVICE_TRACKS`는
+  확인 전 빈 목록이며 TODO(verify: H6b)다. 이 상태에서는 CPU slice를 NPU로
+  오인하지 않도록 빈 결과와 사유를 저장하고 0이 아닌 종료 코드를 반환한다.
+- .pb 시간축과 meta.json measurement_start/end의 관계, warm-up·컴파일 제외 방법.
+  이 둘이 확인된 뒤 NPU 선택 목록과 본측정 구간 필터를 확정한다.
+- GPU kernel·cpu_op 및 NPU 장치 연산별 상위20 이름/호출 수/시간 예시. GPU의
+  gemm·attention 등은 관찰 후보일 뿐 실제 상위 연산이라고 가정하지 않는다.
+- GPU 순수 decode annotation, CUDA correlation 연결 누락과 스텝 수. CUDA graph
+  커널이 연결되지 않으면 값을 추정으로 채우지 말고 원본을 보존한다.
