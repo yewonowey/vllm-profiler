@@ -39,6 +39,7 @@ jobs:
         shell: bash
         run: |
           set -a
+          # shellcheck source=/dev/null
           source "${HETERO_ENV_FILE:?Set repository variable HETERO_ENV_FILE}"
           set +a
           export HETERO_MODELS_JSON="${HETERO_MODELS_JSON:-$MODELS_FROM_VARS}"
