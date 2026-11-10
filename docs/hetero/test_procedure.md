@@ -62,7 +62,9 @@ export HETERO_RESULTS_ROOT='<저장소 밖 결과 루트>'
 전체 스윕 전에 작은 S1 전용 시나리오 파일로 연결·정리·artifact를 먼저 확인한다.
 본 측정은 새 결과 폴더 이름을 사용한다. 스윕 자체는 재개 가능하지만 PER-001은 비어 있는 별도 실행 경로가 필요하다.
 요약·artifact에는 내부 모델 경로 등이 포함될 수 있으므로 저장소 열람 권한과 보존 정책을 확인한다.
-실제 Actions 실행과 HW 실패 시 정리 확인은 **미확인(IT-02)**이다.
+2026-11-10 수동 Actions 42817562993에서 단위시험·pre-commit/actionlint 성공을 확인했다.
+최초 SC1090 실패는 source 지시문 주석으로 해결했다. self-hosted는 러너 미등록으로 미실행이며,
+합의대로 절차 문서화·actionlint로 갈음한다. HW 실패 시 정리·artifact 실증까지 확인한 것은 아니다.
 
 공식 절차: [수동 실행](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow),
 [워크플로 비활성화](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows),
@@ -170,7 +172,9 @@ S1_JSON에는 initial.json의 S1 B0·PDD 두 항목만 넣고 쌍 조건·측정
    ```
 
    S1 B0·PDD의 run_status·analysis_status PASS, 결과표·비교표 생성, 서비스 종료를 확인한다.
-   실제 S1 기동·정지는 **미확인(IT-03/H1)**이며 합성 패키지 시험으로 대체하지 않는다.
+   rc1 IT-03에서 S1 B0·PDD의 단계 전부 성공 및 두 상태 PASS를 확인했다.
+   sweep2 대비 처리량·makespan·평균 TTFT/TPOT/E2E는 모두 ±10% 이내였다.
+   수치·직접 확인 범위는 [시험 보고서](test_report.md)에 기록했다.
 
 ### 합격 기준과 기록 양식
 

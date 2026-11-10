@@ -1,6 +1,8 @@
-# 설계 명세서 초안
+# 설계 명세서
 
-기준일: 2026-11-09. PLAN v6.2 3·5·7장과 현재 `tools/hetero/`,
+문서 갱신: 2026-11-11. 아래 시험·자료 확인일은 2026-11-10이다.
+
+기준일: 2026-11-10. PLAN v6.2 3·5·7장과 현재 `tools/hetero/`,
 엔진 계측 세 파일, COLUMN_DOCS, tests/hetero 및 로컬 실측 메모를 대조했다.
 아래는 구현된 경로다. PLAN의 Perfetto 통합 타임라인·overview 등 후속 모듈을
 이미 구현한 구성요소로 표시하지 않는다.
@@ -17,7 +19,10 @@
 | 분석 | analysis.py, expected.py, server.py, resources.py, transfer.py, common.py | 검증, ID 연결, 계산·정확도·JSON/CSV |
 | 결과표 | finalize_results.py | summary 기반 표, 비교, 데이터셋·사전; loadgen 지표 재계산 안 함 |
 | 부하 검증 | overhead.py | 같은 none 서비스에 monitor OFF/ON 블록 실행, PER-001 판정 |
-| 연산자 | opprofile.py, operator_stats.py | 온라인 실행과 분리된 단일 장치 LLM 프로파일·집계 |
+| 연산자 | opprofile.py, operator_stats.py | 온라인 실행과 분리된 단일 장치 LLM 프로파일·무결성·연산/유형 집계 |
+| 그림 | report_figures.py | CSV·JSON을 보고서 PNG로 표현; 지표 재측정 없음 |
+| CI | hetero_unit_tests.yml, hetero_profile.yml | 기본 러너 시험·정적 검사와 수동 HW 워크플로 분리 |
+| 납품 | third_party/make_release.sh | 태그 자료·외부 결과 허용 목록·해시 묶음 |
 
 ```mermaid
 flowchart TD
@@ -45,6 +50,12 @@ flowchart TD
     OP[opprofile.py: offline LLM] --> TR[torch trace / RBLN PB]
     TR --> OS[operator_stats.py]
     OS --> FIN
+    DATA --> FIG[report_figures.py]
+    OS --> FIG
+    CI[수동 HW CI] --> SW
+    DATA --> REL[make_release.sh]
+    FIG --> REL
+    TAG[태그 docs / repo.bundle / offline bundle] --> REL
 ```
 
 B0에서는 각 장치가 전체 추론을 수행한다. 슬롯 순서는 gpu/npu0/npu1을 번갈아 배치하고
@@ -96,9 +107,10 @@ B0에서는 각 장치가 전체 추론을 수행한다. 슬롯 순서는 gpu/np
   results.csv  comparison.csv  dataset/*.csv  dataset/DATA_DICTIONARY.md
 <opprofile_out>/                 # 온라인 service_run과 별도
   meta.json  cache/  *.trace.json.gz
-  rank_*/session_*/*.pb          # 실제 생성 경로 미확인(H6b)
-  stats/operators.csv  stats/operators.md  stats/tracks.json
-  stats/kernel_steps.csv  stats/memory_bw.json
+  rank_*/session_*/*.pb          # H6b 생성 확인, decode 무결성 문제
+  operators.csv  operators_by_type.csv  operators.md
+  tracks.json  diagnostics.json  kernel_steps.csv  memory_bw.json
+  # 집계 --out을 입력 폴더로 지정한 경우; 별도 폴더도 가능
 ```
 
 `--cache-dir`를 명시하면 서비스 캐시는 지정한 외부 위치를 사용한다.
@@ -175,10 +187,11 @@ ADD일 때만 2블록을 한 번 추가한다. 6블록에서는 두 평균≤5%�
 무효 블록은 1회 재실행하며 원본과 재실행을 모두 보존한다. 다시 무효면 ABORTED다.
 FAIL은 성능 판정 결과이며 프로세스 실패와 다르다. 현재 종료 코드 1은 ABORTED에 대응한다.
 
-**PER-001 1차 측정: 합격(최종 측정은 코드 확정 후)**.
-per001_r3 원본 결과는 S2 PDD·서비스 none의 유효 4블록에서 두 CI 상한≤5%를 확인했다.
+**PER-001 1차·최종 측정 모두 합격**.
+per001_r3 및 per001_final은 S2 PDD·서비스 none의 유효4블록에서 두 CI 상한≤5%를 확인했다.
 세부 수치와 r1b 포트 오류·r2 dirty 기동 실패는 `.notes/PER001_1차_2026-11-07.md`에 있다.
-1차 합격을 이후 코드의 최종 PT-001 완료로 확대하지 않는다(미확인(H8): 최종 측정).
+최종 측정 커밋은 3a6ff3d이며 이후 측정 경로는 주석만 변경됐다.
+최종 d_tp 평균0.139838%, d_lat 평균0.114780%다. 대조 범위와 신뢰구간은 [시험 보고](test_report.md)에 있다.
 
 CPU 참고값은 all-smi/scrape의 프로세스 stat에서 utime+stime+cutime+cstime 차분을 읽고
 `Δticks/CLK_TCK/경과초×100`을 단일 코어 %, 이를 코어 수로 나눈 값을 전체 코어 %로 낸다.
@@ -242,5 +255,29 @@ NPU는 MP=0, RBLN_PROFILER=1, native vllm 구현을 설정하고 cwd를 외부 o
 현재 worker의 start_profile 요구로 torch profiler_config도 제공한다.
 GPU kernel과 cpu_op은 구분하며 CPU 연산을 NPU 장치 연산으로 대체하지 않는다.
 GPU decode 스텝은 vLLM annotation과 CUDA launch correlation으로 연결한다.
-NPU 장치 트랙 선택 목록은 확인 전 비워 두고 inventory·사유를 저장한 뒤 실패 코드로 종료한다.
-정상 PB·트랙·시간축·GPU 연결률은 미확인(H6b)이며, 절차는 [운영 문서](profiler.md)에 있다.
+H6b에서 NEC(Neural Engine Clusters)·Neural DMA 트랙을 확인했다.
+전체 PB는 warm-up 포함·무결성 문제 때문에 정상 전체 집계로 사용하지 않는다.
+현재 NPU prefill은 마지막 정상 실행 모듈만 선택하며 부분 결과임을 scope/reason에 남긴다.
+NPU decode는 256·64토큰 모두 버린/미종료 slice가 있어 not_collected다.
+GPU는 kernel/cpu_op 카테고리별 inclusive 시간 합을 분모로 쓰고 CUDA correlation으로 step을 연결한다.
+TYPE_RULES는 첫 일치로 유형을 정하며 미일치는 기타다. 유형 비율도 category별 분모다.
+미수집 decode에서 정상 연산 비율을 만들지 않는다. GPU T06의 접근량 모델은 미확인(H6b)이다.
+실측·제약은 [분석 보고서](final_report_analysis.md) 8장, 명령은 [사용 안내](user_guide.md)에 있다.
+
+## 스윕·데이터셋·그림·납품 경계
+
+sweep은 실행 전 pair_id의 workload/비교 조건을 검증하고 모델 키를 외부 경로에 대응한다.
+성공한 attempt는 returncode=0 및 모든 workload의 run_status·analysis_status=PASS일 때 재사용한다.
+실패 attempt는 접미사 폴더로 보존한다. --only는 선택 실행이며 S6 pilot을 자동화하지 않는다.
+finalize는 scenarios.json의 시도와 summary를 읽고 실패 행도 results에 남긴다.
+comparison은 같은 pair_id·comparison의 유효 쌍만 계산한다. S7은 저장된 토큰 ID 맵을 대조한다.
+--opprofile-dir의 집계 CSV를 dataset에 병합하되 원본 PB·torch trace는 넣지 않는다.
+report_figures는 동일 CSV·JSON에서 그림을 만들며 source/status/부분 범위는 보고서 캡션에 유지한다.
+
+일반 CI는 단위시험과 변경 파일 pre-commit을 수행한다. 수동 HW CI는 러너 환경 파일을 source하고
+sweep → finalize → 선택 PER-001 뒤 요약·허용된 artifact를 저장한다. 실제 HW CI는 미실행이다.
+make_release는 dirty 작업 트리·태그 부재를 거부하고 main·태그를 repo.bundle에 넣는다.
+docs·저장소 LICENSE는 태그에서 추출하므로 작업 중 문서를 태그 내용으로 혼동하지 않는다.
+외부 dataset은 CSV·사전, samples는 대표 summary·PNG만 복사한다.
+파일당100MiB 초과·symlink 자료를 제외한 내역을 남기며 trace·로그는 허용 목록에 없다.
+MANIFEST는 자기 자신을 제외한 납품 파일 해시다. 실제 rc1 설치 판정은 [시험 보고](test_report.md)에 있다.

@@ -1,6 +1,8 @@
-# 프로그램 목록 초안
+# 프로그램 목록
 
-기준일: 2026-11-09, 코드 기준 커밋 `d1b715c`.
+문서 갱신: 2026-11-11. 아래 시험·자료 확인일은 2026-11-10이다.
+
+기준일: 2026-11-10, 코드 기준 커밋 `b824255`.
 줄 수는 이번 문서 작성 시 `wc -l`로 직접 측정했으며 빈 줄·주석을 포함한다.
 엔진은 수정분이 아닌 파일 전체 줄 수다. CLI가 없는 모듈에 가상의 실행 명령을 부여하지 않는다.
 모든 명령은 저장소 루트 기준이다. 결과·모델·venv 경로는 외부 위치로 설정한다.
@@ -30,13 +32,13 @@ MODEL_PATH, RUN_DIR, SWEEP_DIR, OP_OUT 같은 실행 시 변수로 표현한다.
 | orchestrate.py | 690 | B0/PDD 서버 기동·정지, 역할 argv/env, clean·버전 검사 | CUDA_PY; start/stop (A); 자식은 CUDA_PY/RBLN_PY |
 | loadgen.py | 389 | 토큰 입력·SSE 요청, 중앙 FIFO, 원자료·응답 헤더 저장 | CUDA_PY; (B), run에서 호출 |
 | finalize_results.py | 371 | 결과표·비교표·데이터셋·DATA_DICTIONARY | CUDA_PY; (F), sweep에서 호출 |
-| profiler/run.py | 385 | 온라인 모드·서비스·workload 생명주기 | CUDA_PY; (C) |
-| profiler/overhead.py | 295 | PER-001 OFF/ON 반복·통계·CPU·보고서 | CUDA_PY; (D) |
+| profiler/run.py | 386 | 온라인 모드·서비스·workload 생명주기 | CUDA_PY; (C) |
+| profiler/overhead.py | 296 | PER-001 OFF/ON 반복·통계·CPU·보고서 | CUDA_PY; (D) |
 | profiler/sweep.py | 192 | 쌍 검사·모델 매핑·캐시·재개·finalize | CUDA_PY; (E) |
 | profiler/analysis.py | 340 | 원자료·계측 검증 및 client/server/resource/transfer/energy 계산 | CUDA_PY; (G); --run-dir는 workload 폴더 |
-| profiler/scrape.py | 69 | 1Hz endpoint 병렬 GET, 원문 JSONL·경계 함수 | CUDA_PY; (H), monitors에서 실행 |
-| profiler/opprofile.py | 161 | 단일 장치 오프라인 LLM 수집, meta.json | GPU=CUDA_PY, NPU=RBLN_PY; (I) |
-| profiler/operator_stats.py | 183 | Chrome/PB 파싱, 카테고리별 top20, decode kernel step | PDD_TOOLS_PY + PERFETTO_TP_BIN; (J) |
+| profiler/scrape.py | 70 | 1Hz endpoint 병렬 GET, 원문 JSONL·경계 함수 | CUDA_PY; (H), monitors에서 실행 |
+| profiler/opprofile.py | 165 | 단일 장치 오프라인 LLM 수집, meta.json | GPU=CUDA_PY, NPU=RBLN_PY; (I) |
+| profiler/operator_stats.py | 268 | Chrome/PB 무결성·카테고리별 top20·유형 비율·decode kernel step | PDD_TOOLS_PY + PERFETTO_TP_BIN; (J) |
 
 ## 내부 분석·수집 모듈
 
@@ -63,10 +65,10 @@ COLUMN_DOCS는 resources.py와 finalize_results.py에 있다. dataset/DATA_DICTI
 
 | 저장소 상대 경로 | 줄 수 | 목적 | 실행 환경·방법 |
 |---|---:|---|---|
-| tools/hetero/third_party/make_offline_bundle.sh | 66 | 고정 산출물·wheel 다운로드, 해시·라이선스 묶음 | 인터넷 가능한 bash/python3; (K) |
-| tools/hetero/third_party/install_offline.sh | 49 | SHA256 검증, 외부 venv·바이너리 설치 | bash/python3; (L) |
-| tools/hetero/third_party/versions.env | 115 | 버전·릴리스 날짜·이유·산출물 SHA256 | 두 스크립트가 source; 직접 실행 안 함 |
-| tools/hetero/scenarios/initial.json | 1523 | 모델 키·쌍·서비스·workload 매트릭스 | sweep의 --scenarios 입력; S9는 제거됨 |
+| tools/hetero/third_party/make_offline_bundle.sh | 68 | 고정 산출물·wheel 다운로드, 해시·라이선스 묶음 | 인터넷 가능한 bash/python3; (K) |
+| tools/hetero/third_party/install_offline.sh | 51 | SHA256 검증, 외부 venv·바이너리 설치 | bash/python3; (L) |
+| tools/hetero/third_party/versions.env | 119 | 버전·릴리스 날짜·이유·산출물 SHA256 | 두 스크립트가 source; 직접 실행 안 함 |
+| tools/hetero/scenarios/initial.json | 1525 | 모델 키·쌍·서비스·workload 매트릭스 | sweep의 --scenarios 입력; S9는 제거됨 |
 
 번들·venv·설치 바이너리는 저장소 밖에 둔다. Python 대상 버전은 번들과 설치에서 일치해야 한다.
 실제 설치 여부와 경로는 사용자의 환경에 따르며 문서에 고정하지 않는다.
@@ -131,9 +133,9 @@ bash tools/hetero/third_party/make_offline_bundle.sh --out "$BUNDLE" --python-ve
 bash tools/hetero/third_party/install_offline.sh --bundle "$BUNDLE" --venv "$TOOLS_VENV" --tools-dir "$TOOLS_DIR"
 ```
 
-NPU 오프라인 PB의 생성·장치 트랙·시간축은 미확인(H6b)이다.
-현재 빈 트랙 선택 목록에서는 operator_stats가 inventory와 사유를 남기고 실패한다.
-실행 가능 명령이 있다는 사실을 HW 검증 완료로 읽지 않는다.
+H6b에서 NPU PB 생성과 NEC·Neural DMA 트랙을 확인했다. prefill은 마지막 정상 모듈의 부분 집계이며,
+decode 64/256토큰은 trace 무결성 문제로 not_collected다. GPU 두 phase는 집계했다.
+전체 prefill 대표성과 NPU decode 정상 집계는 미확인(H6b)이다.
 
 줄 수 재계산 명령:
 
@@ -142,3 +144,21 @@ wc -l tools/hetero/*.py tools/hetero/profiler/*.py tools/hetero/profiler/*.yaml 
 wc -l tests/hetero/*.py tests/hetero/fakes/*.py
 wc -l vllm_rbln/v1/worker/metrics_v2.py vllm_rbln/v1/worker/rbln_model_runner.py vllm_rbln/distributed/kv_transfer/kv_connector/v1/rbln_nixl/worker.py
 ```
+
+## 추가된 그림·CI·납품 프로그램
+
+| 저장소 상대 경로 | 줄 수 | 목적 | 실행 환경·방법 |
+|---|---:|---|---|
+| tools/hetero/report_figures.py | 293 | 결과표·단계·전송·에너지·연산 유형·PER-001 그림 | PDD_TOOLS_PY; 아래 명령 |
+| tools/hetero/third_party/make_release.sh | 124 | 태그 소스·문서·오프라인 도구·데이터셋·MANIFEST 묶음 | bash/python3/git; 아래 명령 |
+| .github/workflows/hetero_unit_tests.yml | 34 | 수동/대상 push, 단위시험·변경 파일 pre-commit | GitHub ubuntu-22.04/Python3.10 |
+| .github/workflows/hetero_profile.yml | 118 | 수동 sweep·finalize·선택 PER-001·요약/artifact | self-hosted, hetero-pdd 라벨; 러너 환경 파일 |
+| .github/actionlint.yaml | 13 | self-hosted 라벨 정적 검사 설정 | pre-commit/actionlint |
+
+```bash
+"$PDD_TOOLS_PY" tools/hetero/report_figures.py --sweep-dir "$SWEEP_DIR"   --opprofile-dir "$OP_OUT" --overhead "$PER_RUN_DIR/overhead/overhead.json" --out "$FIGURE_OUT"
+bash tools/hetero/third_party/make_release.sh --out "$RELEASE_OUT" --tag "$RELEASE_TAG"   --offline-bundle "$OFFLINE_BUNDLE" --sweep-dir "$SWEEP_DIR" --opprofile-dir "$OP_OUT"
+```
+
+함수・CLI 인자의 전체 목록은 [함수 참조](function_reference.md), 실제 실행은 [사용 안내](user_guide.md),
+CI·납품 확인은 [시험 보고](test_report.md)와 [시험 절차](test_procedure.md)를 참조한다.
