@@ -51,6 +51,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=("gpu", "npu"), required=True)
     parser.add_argument("--phase", choices=("prefill", "decode"), required=True)
+    parser.add_argument("--decode-tokens", type=int, default=256)
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--model-name", required=True)
     parser.add_argument("--dtype", default="bfloat16")
@@ -71,7 +72,10 @@ def main(argv=None):
     if args.max_model_len < 2:
         raise ValueError("max-model-len must allow input and output tokens")
     inputs = min(4096 if args.phase == "prefill" else 32, args.max_model_len - 1)
-    outputs = min(1 if args.phase == "prefill" else 256, args.max_model_len - inputs)
+    outputs = min(
+        1 if args.phase == "prefill" else args.decode_tokens,
+        args.max_model_len - inputs,
+    )
     out.mkdir(parents=True, exist_ok=True)
     configure(args.device, out)
     settings = dict(

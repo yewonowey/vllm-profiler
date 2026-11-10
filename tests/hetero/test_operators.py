@@ -7,12 +7,60 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tools.hetero import finalize_results
 from tools.hetero.profiler import operator_stats as ops
 
 
 class OperatorTests(unittest.TestCase):
+    def test_npu_last_module_and_invalid_trace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "meta.json").write_text(
+                json.dumps(dict(device="npu", phase="decode", model="toy"))
+            )
+            names = [f"rbln_20261110_121548351{s}.pb" for s in ("", "_9", "_10")]
+            for name in names:
+                (root / name).touch()
+            for dropped, unfinished in [(0, 0), (17474, 0), (0, 511)]:
+
+                def read(path, health, dropped=dropped, unfinished=unfinished):
+                    self.assertEqual(path.name, names[-1])
+                    health.update(
+                        errors={"slice_max_depth_exceeded": dropped},
+                        unfinished={"Neural Engine Clusters": unfinished},
+                    )
+                    track = "Neural Engine Clusters"
+                    row = dict(
+                        name="op",
+                        track=track,
+                        category=track,
+                        start_ns=0,
+                        duration_ns=2000,
+                    )
+                    return [row, dict(row, category="Host")]
+
+                with patch.object(ops, "pb_rows", side_effect=read):
+                    args = ["--input", str(root), "--out", str(root / "stats")]
+                    if dropped or unfinished:
+                        with self.assertRaises(ValueError):
+                            ops.main(args)
+                    else:
+                        ops.main(args)
+                with (root / "stats/operators.csv").open() as stream:
+                    result = list(csv.DictReader(stream))
+                self.assertEqual(len(result), 1)
+                self.assertEqual(
+                    result[0]["status"],
+                    "not_collected" if dropped or unfinished else "measured",
+                )
+                self.assertEqual(
+                    result[0]["ratio"], "" if dropped or unfinished else "1.0"
+                )
+                if dropped or unfinished:
+                    self.assertEqual(result[0]["reason"], ops.TRACE_ERROR)
+
     def test_aggregate(self):
         cat = "kernel"
         cases = [("a", cat, 2), ("a", cat, 4), ("b", cat, 3), ("a", "cpu_op", 8)]
@@ -73,18 +121,20 @@ from tools.hetero.profiler.operator_stats import pb_rows
 b = TraceProtoBuilder()
 p = b.add_packet()
 p.track_descriptor.uuid = 1
-p.track_descriptor.name = "synthetic-device"
+p.track_descriptor.thread.pid = 0
+p.track_descriptor.thread.tid = 229376
+p.track_descriptor.thread.thread_name = "Neural Engine Clusters"
 for t, kind in [(1000, 1), (3000, 2)]:
     p = b.add_packet()
     p.timestamp, p.trusted_packet_sequence_id = t, 1
     p.track_event.type, p.track_event.track_uuid = kind, 1
     if kind == 1:
         p.track_event.name = "op"
-        p.track_event.categories.append("device")
+        p.track_event.categories.append("Neural Engine Clusters")
 f = Path(sys.argv[1])
 f.write_bytes(b.serialize())
 r = pb_rows(f)
-assert r[0]["track"] == "synthetic-device" and r[0]["duration_ns"] == 2000
+assert r[0]["track"] == "Neural Engine Clusters" and r[0]["duration_ns"] == 2000
 """
         with tempfile.TemporaryDirectory() as temp:
             subprocess.run(
