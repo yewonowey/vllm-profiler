@@ -24,7 +24,8 @@ def fetch(endpoint):
     row = dict(mono_ns=time.monotonic_ns(), real_ns=time.time_ns(), endpoint=name)
     try:
         try:
-            response = urlopen(url, timeout=0.8)
+            # Operator-controlled URLs; the normal runner uses loopback HTTP.
+            response = urlopen(url, timeout=0.8)  # nosec B310
         except HTTPError as exc:
             response = exc
         with response:

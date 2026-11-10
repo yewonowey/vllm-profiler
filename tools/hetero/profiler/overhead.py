@@ -178,7 +178,8 @@ def measure_block(number, measure, data):
 def save(root, data):
     (root / "overhead.json").write_text(json.dumps(data, indent=2) + "\n")
     final = data["decisions"][-1] if data["decisions"] else {}
-    label = {"PASS": "합격", "FAIL": "불합격", "ABORTED": "측정 중단"}.get(
+    # PASS is a measurement verdict, not a password or credential.
+    label = {"PASS": "합격", "FAIL": "불합격", "ABORTED": "측정 중단"}.get(  # nosec B105
         data["verdict"], "측정 중"
     )
     lines = [

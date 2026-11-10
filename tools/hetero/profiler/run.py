@@ -118,7 +118,8 @@ def profile_control(out, role, url, action):
     )
     try:
         request = Request(url + "/" + action, data=b"", method="POST")
-        with urlopen(request, timeout=10) as response:
+        # The runner supplies loopback HTTP service URLs from its own config.
+        with urlopen(request, timeout=10) as response:  # nosec B310
             row["status"] = response.status
     except Exception as exc:
         row.update(status=getattr(exc, "code", 0), error=str(exc))

@@ -19,6 +19,7 @@ source "$here/versions.env"
 mkdir -p "$out/artifacts" "$out/wheels" "$out/licenses"
 cp "$here/versions.env" "$out/versions.env"
 printf '%s\n' "$PYTHON_REQUIREMENTS" > "$out/requirements.txt"
+printf 'pip==%s\nsetuptools==%s\n' "$PIP_VERSION" "$SETUPTOOLS_VERSION" > "$out/bootstrap.txt"
 printf '%s\n' "$python_version" > "$out/python-version"
 while read -r digest filename url; do
     file="$out/artifacts/$filename"
@@ -30,7 +31,8 @@ done <<< "$ARTIFACTS"
 python3 -m pip download --no-cache-dir --only-binary=:all: \
     --python-version "$python_version" --implementation cp \
     --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64 \
-    --dest "$out/wheels" --requirement "$out/requirements.txt"
+    --dest "$out/wheels" --requirement "$out/requirements.txt" \
+    --requirement "$out/bootstrap.txt"
 export WHEEL_SHA256
 python3 - "$out" <<'PY'
 import hashlib

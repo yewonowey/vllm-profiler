@@ -30,6 +30,8 @@ python_version=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
     echo 'Use a python3 matching the bundle target version on PATH' >&2; exit 1;
 }
 python3 -m venv "$venv"
+"$venv/bin/python" -m pip install --no-cache-dir --no-index --upgrade \
+    --find-links "$bundle/wheels" "pip==$PIP_VERSION" "setuptools==$SETUPTOOLS_VERSION"
 "$venv/bin/python" -m pip install --no-cache-dir --no-index \
     --find-links "$bundle/wheels" --requirement "$bundle/requirements.txt"
 mkdir -p "$tools_dir/perfetto-ui"
