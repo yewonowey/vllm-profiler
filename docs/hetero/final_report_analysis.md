@@ -91,7 +91,9 @@ NPU decode는 추가로 32/64 × 4요청을 재측정했다(`h6b/npu_decode_shor
 256·64토큰 모두 trace 무결성 문제가 있어 NPU decode 연산자는 미수집이다.
 출처: 각 meta.json 및 같은 폴더의 trace 파일; `.notes/H6b_2026-11-10.md`.
 
-[그림: B0와 PDD의 역할 배치 및 본측정·수집 경계]
+![구성과 측정 경계](figures/01_design.png)
+
+그림 1. 출처: PLAN 5.3·5.4. 설계도(측정값 아님).
 
 ## 2. B0 대 PDD 지연·처리량
 
@@ -165,7 +167,9 @@ S5 PDD 256/4096도 TTFT 168.749초, 큐 168.453초, service TTFT 0.296초다(R26
 S1 sweep2의 처리량 증가는 요청 수·종료 시점의 장치별 잔여 작업 영향일 가능성이 있다(**추정**).
 현재 B0 요청 배분은 GPU/NPU0/NPU1=132/22/22다(R01). 이를 코드 개선 효과로 단정하지 않는다.
 
-[그림: 조건별 B0/PDD 처리량·E2E와 capacity/equal_concurrency 구분]
+![B0 대 PDD 성능](figures/02_comparison.png)
+
+그림 2. 출처: results.csv·comparison.csv; 표의 pair/workload. measured; 단일 측정, TPOT 미정의는 공란.
 
 ## 3. 모델 크기·배치·동시성 변화의 영향
 
@@ -192,6 +196,10 @@ PDD decode 전용 배치 8은 성공했지만 B0 쌍이 없어 비교하지 않�
 근거: `.notes/S3a_batch2_2026-11-10.md`, `sweep1/runs/s3a_b8_b0/service/logs/npu0.log:300`,
 `sweep1/runs/s3a_b8_pdd/i2048_o256/profile/summary.json`.
 현재 배치 2 실행의 성공은 R09~R10으로 확인된다.
+
+![배치·동시성·모델 크기](figures/03_scaling.png)
+
+그림 3. 출처: results.csv; S3a·S3b·S4. measured; S3a 배치/capacity, S3b 총 동시성/equal_concurrency, S4 모델명.
 
 ## 4. 분할 비율 대체 분석: S5와 S5t
 
@@ -233,7 +241,9 @@ S5t의 세부 서버 단계와 같은 정확도로 합치지 않는다(R21~R29�
 출력이 긴 조건에서 decode 비중은 커지고 GPU prefill 활성 구간은 작아졌다.
 이는 NPU decode 경로가 관측 서비스 시간을 지배한다는 근거지만 NPU가 연산 포화인지 메모리 병목인지는 확정하지 않는다.
 
-[그림: S5t의 M14a 누적 막대와 M14b 장치별 활성 구간]
+![S5·S5t 단계 비율](figures/04_phases.png)
+
+그림 4. 출처: results.csv; S5·S5t. monitor: estimated 근사; trace: measured. M14b는 단계 간 겹침 허용.
 
 ## 5. 단계별 자원 활용률
 
@@ -271,7 +281,9 @@ S5t 4096/256 시스템 prefill CPU coverage도 0.009631%에 불과하다(R27).
 이 값을 “연산이 없었다” 또는 신뢰할 수 있는 단계 평균으로 해석하지 않는다.
 전체 수집 PASS가 모든 세부 상태 구간의 충분한 표본을 보장하지 않는 사례다.
 
-[그림: S2·S5t 장치별 활용률·전력 시계열과 phase coverage]
+![활용률·전력·단계 coverage](figures/05_resources.png)
+
+그림 5. 출처: dataset/resource_timeseries.csv; results.csv phase_resources; S2·S5t i4096_o256. 시계열 measured; 단계 귀속 estimated; 실행별 첫 표본 기준 상대 시각.
 
 ## 6. 데이터 전송 효율과 병목
 
@@ -309,6 +321,10 @@ M14a 및 이 경과시간은 긴 출력 조건의 decode 경로 우선 조사를
 T02는 `전송 count 단위 미확인(H5)`으로 미수집이다.
 기존 H5에서 count와 요청 수가 맞았지만 여러 KV 그룹·재시도에서도 동일 단위인지는 확인하지 않았다.
 출처: `.notes/S1_S2_repro_2026-11-06.md` H5, R04·R27~R29.transfer.
+
+![KV 전송과 링크 규격](figures/06_transfer.png)
+
+그림 6. 출처: results.csv transfer; S2·S5t i4096_o256; link_theoretical. T01 measured; 비율은 참고 비교이며 T05·PCIe 실측 효율 아님.
 
 ### GDDR6 대역폭
 
@@ -382,67 +398,65 @@ S5t 256/4096에서는 GPU prefill 활성 비율이 0.061%인데 전체 GPU 전�
 S6 prefill의 높은 J/output-token은 입력 처리는 많고 출력은 요청당 1토큰인 분모 효과도 있다(R30/R32).
 다른 길이 조건끼리 R11만 비교해 모델 에너지 효율 순위를 정하지 않는다.
 
-[그림: 가속기별 누적 에너지와 출력 토큰당 에너지, 유휴 구간 표시]
+![에너지 효율과 유휴 전력](figures/07_energy.png)
+
+그림 7. 출처: results.csv energy·phase_resources; dataset/resource_timeseries.csv; S2 idle/누적. estimated; idle 전력을 총량에서 빼지 않음, 누적선은 관측 표본 범위.
 
 ## 8. 하드웨어별 연산 특성
 
-GPU prefill·decode는 원본 gzip 및 Perfetto의 kernel/cpu_op 개수가 일치하고 버려진 slice·미종료 slice가 각각 0이다.
-GPU decode 커널 시간 연결률은 99.827082%이며 순수 decode 255스텝의 커널 합은 1337.779144ms다.
-카테고리별 inclusive 시간 합 대비 비율이며, GPU decode 전체 연산자 표에는 초기 prefill도 포함된다.
-출처: `h6b/{gpu_prefill,gpu_decode}/operators.csv`, `kernel_steps.csv`; `.notes/H6b_2026-11-10.md`의 원자료 대조.
+Qwen2.5-3B-Instruct의 단일 장치 vLLM LLM API 오프라인 프로파일이다. warm-up 뒤 측정 generate를 수행했다.
+GPU·NPU prefill은 i4096/o1 × 4, GPU decode는 i32/o256 × 4다.
+NPU decode는 i32/o256 및 i32/o64 × 4 모두 trace 무결성 문제로 미수집이다.
+출처: `h6b/<장치·phase>/meta.json`, `.notes/H6b_2026-11-10.md`.
 
-NPU prefill은 전체 trace의 import 오류를 피하고 마지막 본측정 `_257.pb` 모듈만 부분 집계했다.
-선택 파일의 버려진 slice·미종료 slice는 0이며 NEC 8,576개, Neural DMA 1,582개다.
-장치 thread 이름과 category가 모두 일치하는 slice만 썼다. 전체 요청 평균이나 대표 decode step과 비교하지 않는다.
-출처: `h6b/npu_prefill/operators.csv`, `diagnostics.json`; 같은 H6b 메모.
+### 유형 분류와 비율
 
-NPU decode는 **not_collected**, reason="RBLN Profiler trace 무결성 문제(종료<시작 이벤트)"다.
-실행별 `_519.pb` 원본에서 종료<시작 18,496개, Perfetto drop 17,474개, NEC/Neural DMA 미종료 각각 511개를 확인했다.
-전체 decode trace는 문자열 풀 한도 초과로 읽기 실패했으며 정상 비율표를 만들지 않았다.
-출처: `h6b/npu_decode/operators.md`, `diagnostics.json`; `.notes/H6b_2026-11-10.md`의 원본 타임스탬프 예시.
+이름별 상위20을 다시 묶지 않고 **원자료 전체 slice**를 유형으로 분류한 뒤 카테고리별 inclusive 시간 합으로 나눴다.
+GPU는 GEMM/WMMA/GEMV→matmul, flash/attention→attention, norm, elementwise/활성화, 기타 순으로 분류한다.
+NPU는 이름의 숫자를 지우고 DMA 카테고리, linear/matmul/GEMM, attention/attn, norm, elementwise/활성화로 분류한다.
+규칙에 맞지 않으면 기타다. 정확한 정규식과 우선순위는 `profiler/operator_stats.py`의 TYPE_RULES에 있다.
+시간은 measured이며 **유형은 이름 규칙에 의한 분류**다. 0%는 해당 이름 규칙에 잡힌 시간이 없다는 뜻이지 해당 연산이 실행되지 않았다는 뜻이 아니다.
 
-64토큰 재측정도 정상 집계 조건을 충족하지 못했다. 방식은 단일 장치 vLLM LLM API의 오프라인 프로파일이며
-warm-up 후 측정 generate를 수행했다. GPU decode는 i32/o256 × 4, NPU 재측정은 i32/o64 × 4다.
-NPU 재측정 meta는 PASS지만 trace가 정상이라는 뜻은 아니다. 다음 표는 마지막 실행별 PB 기준이다.
+| 장치·phase / 카테고리 | matmul | linear | attention | norm | elementwise | DMA | 기타 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| gpu / prefill / kernel | 70.7860 | 0.0000 | 22.7315 | 2.0736 | 1.2728 | 0.0000 | 3.1360 |
+| gpu / decode / kernel | 81.4450 | 0.0000 | 9.7851 | 2.1900 | 3.1228 | 0.0000 | 3.4571 |
+| npu / prefill / Neural Engine Clusters | 0.0000 | 59.9977 | 0.0000 | 0.0000 | 0.7350 | 0.0000 | 39.2672 |
+| npu / prefill / Neural DMA | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 100.0000 | 0.0000 |
+| NPU decode(256·64토큰) | 미수집 | 미수집 | 미수집 | 미수집 | 미수집 | 미수집 | 미수집 |
 
-| NPU decode 출력 길이 | 파일 | 원본 종료<시작 | Perfetto 버린 slice | NEC / Neural DMA 미종료 | 판정 |
-| --- | --- | ---: | ---: | --- | --- |
-| 256 | rbln_20261110_121548351_519.pb | 18,496 | 17,474 | 511 / 511 | not_collected |
-| 64 | rbln_20261110_142246607_135.pb | 18,054 | 17,032 | 511 / 511 | not_collected |
+모든 값은 %. 출처: `h6b/{gpu_prefill,gpu_decode,npu_prefill}/operators_by_type.csv`;
+통합본은 `sweep2/dataset/operators_by_type.csv`. NEC와 DMA는 별도 분모이며 시간을 더하지 않는다.
+GPU prefill은 matmul 70.7860%, attention 22.7315%이고 decode는 각각 81.4450%, 9.7851%다.
+이 이름 분류에서는 decode의 matmul 비중이 더 크다. GPU decode 전체 generate에는 초기 prefill도 포함한다.
+NPU prefill NEC의 linear는 59.9977%지만 기타가 39.2672%여서 유형 해석에 상당한 공백이 있다.
+NPU 내부 command와 GPU fused kernel의 분할·명명 단위 및 관측 범위가 달라 위 비율로 장치 우열을 판단하지 않는다.
+특히 NPU에서 attention 0%를 attention 계산 부재로 해석하지 않는다(융합·하위 명령 가능성은 추정).
 
-64토큰 전체 PB에서도 종료<시작 2,292,890개와 Perfetto drop 2,163,064개를 확인했다.
-두 길이 모두 같은 미수집 사유를 유지하고 NPU decode 상위 연산·비율은 산출하지 않았다.
-**추정:** RBLN Profiler 기록/타임스탬프 생성 문제일 수 있으나 내부 원인은 미확인(H6b)이다.
-출처: `h6b/npu_decode_short/{meta.json,diagnostics.json,diagnostics.md}`; 같은 H6b 메모 10절.
+### 무결성과 집계 범위
 
-| 장치·phase | 순위 | 연산 원명 | 비율(%) | 호출 수 | 총 시간(ms) |
-| --- | --- | --- | --- | --- | --- |
-| gpu_prefill | 1 | `void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_256x128_32x3_tn_align8>(cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_256x128_32x3_tn_align8::Params)` | 36.583828 | 4608 | 310.943295 |
-| gpu_prefill | 2 | `void flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, true, false, false, false, true, false, false, false>(flash::Flash_fwd_params)` | 21.833220 | 4608 | 185.570885 |
-| gpu_prefill | 3 | `void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_128x128_32x4_tn_align8>(cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_128x128_32x4_tn_align8::Params)` | 18.989454 | 4608 | 161.400372 |
-| gpu_prefill | 4 | `std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, false, true, true, false, 7, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16 const>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>)` | 5.829581 | 128 | 49.548371 |
-| gpu_prefill | 5 | `void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64x64_32x10_tn_align8>(cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64x64_32x10_tn_align8::Params)` | 5.280943 | 4608 | 44.885236 |
-| gpu_decode | 1 | `void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_64x2_tn_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_64x2_tn_align8::Params)` | 39.503542 | 9180 | 531.530982 |
-| gpu_decode | 2 | `void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_64x2_tn_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_64x2_tn_align8::Params)` | 20.802032 | 9180 | 279.897049 |
-| gpu_decode | 3 | `void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x2_tn_align8>(cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x2_tn_align8::Params)` | 15.235796 | 9436 | 205.001811 |
-| gpu_decode | 4 | `void cutlass::Kernel2<cutlass_80_wmma_tensorop_s161616gemm_bf16_32x32_128x1_tn_align8>(cutlass_80_wmma_tensorop_s161616gemm_bf16_32x32_128x1_tn_align8::Params)` | 5.583089 | 9180 | 75.121992 |
-| gpu_decode | 5 | `void flash::flash_fwd_splitkv_combine_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, 4, 6, true>(flash::Flash_fwd_params)` | 5.072908 | 9180 | 68.257374 |
-| npu_prefill | 1 | `256_linear_19_14` | 0.068701 | 1 | 0.038637 |
-| npu_prefill | 2 | `256_linear_139_24` | 0.068594 | 1 | 0.038577 |
-| npu_prefill | 3 | `256_linear_19_19` | 0.068575 | 1 | 0.038566 |
-| npu_prefill | 4 | `256_linear_31_19` | 0.068557 | 1 | 0.038556 |
-| npu_prefill | 5 | `256_linear_87_14` | 0.068514 | 1 | 0.038532 |
+GPU 두 파일은 gzip·Perfetto의 kernel/cpu_op 개수가 일치하고 버려진·미종료 slice가 0이다.
+GPU decode 커널 시간의 99.827082%가 스텝에 연결되며 순수 decode 255스텝 커널 합은 1337.779144ms다.
+NPU prefill 전체 `rbln_20261110_120819072.pb`는 660,932,611bytes이며 전체/실행별 PB 합계는 1,316,636,786bytes다.
+전체 파일 재검사에서도 버린 slice 17,032개, NEC·Neural DMA 미종료 각각 511개가 나와 전체 집계를 사용하지 않았다.
+**깨끗한 마지막 본측정 `_257.pb` 한 파일만** 사용했다: 3,808,148bytes, 버린·미종료·원본 종료<시작 모두 0.
+NEC 8,576개(56.239480ms), Neural DMA 1,582개(28.136035ms)의 마지막 chunked-prefill 모듈이며 4요청 전체의 대표값이 아니다.
+출처: 해당 PB, `h6b/npu_prefill/diagnostics.json`, 같은 H6b 메모의 전체/마지막 파일 대조.
 
-위 GPU 표는 kernel, NPU 표는 마지막 모듈의 NEC 카테고리 기준이다. NPU 내부 command ID 조각과 GPU fused kernel은 같은 집계 단위가 아니다.
-각 표의 출처는 `h6b/<장치·phase>/operators.csv`; 통합본은 `sweep2/dataset/operators.csv`이다.
-현재 자료로 NPU decode의 우세 연산이나 GPU 대비 연산 속도 차이를 결론 내리지 않는다.
-GPU의 prefill에는 tensorop GEMM·flash attention, decode에는 작은 타일 WMMA GEMM 이름이 상위에 나타난다.
-NPU prefill은 개별 command ID로 잘게 나뉘어 상위 단일 항목 비율이 약 0.069%다.
-이 차이는 명명·분할 단위와 측정 범위의 차이를 포함하므로 NPU의 계산이 더 균등하다는 증거로 해석하지 않는다.
-NPU decode는 두 길이 모두 미수집이므로 장치 간 decode 연산 분포 비교는 보류한다.
-출처: 위 상위 5개 표 및 `h6b/<장치·phase>/operators.csv`의 category·scope.
+| NPU decode 출력 길이 | 마지막 PB | 원본 종료<시작 | 버린 slice | NEC / Neural DMA 미종료 |
+| --- | --- | ---: | ---: | --- |
+| 256 | rbln_20261110_121548351_519.pb | 18,496 | 17,474 | 511 / 511 |
+| 64 | rbln_20261110_142246607_135.pb | 18,054 | 17,032 | 511 / 511 |
 
-[그림: GPU phase별 커널 구성과 NPU prefill 부분 집계, NPU decode 미수집 표시]
+두 길이 모두 `not_collected`, reason="RBLN Profiler trace 무결성 문제(종료<시작 이벤트)"다.
+64토큰 전체 PB에서도 종료<시작 2,292,890개, 버린 slice 2,163,064개를 확인했다.
+원인은 **추정: RBLN Profiler 기록/타임스탬프 생성 문제**이며 내부 원인은 미확인(H6b)이다.
+버린 slice를 제외한 연산자 비율은 만들지 않았다. NPU decode 분포와 GPU 대비 속도 비교는 보류한다.
+출처: `h6b/npu_decode/operators.md`, `h6b/npu_decode_short/diagnostics.json`; H6b 메모.
+
+![이름 기반 연산 유형 분포](figures/08_types.png)
+
+그림 8. 출처: h6b/*/operators_by_type.csv. 시간 measured; 이름 규칙 분류. GPU 전체 generate / NPU prefill 마지막 모듈; NPU decode 미수집.
 
 ## 9. 모니터링 부하
 
@@ -469,6 +483,10 @@ ON 8실행 CPU 평균은 단일 코어 대비 all-smi 0.9181%, scrape 0.7072%,
 TIME_WAIT 설명은 소켓 스냅샷이 없어 **추정**이며, 확인된 사실은 bind 오류와 수정 후 r3 완료다.
 이전 중단을 오버헤드 초과 FAIL로 세지 않는다. 최종 코드 확정 후 재측정은 남아 있다(미확인 H8).
 출처: `per001_r1b/overhead/overhead.json`, `per001_r2/monitor/service_start.log`, PER001 메모.
+
+![PER-001 1차: PASS](figures/09_overhead.png)
+
+그림 9. 출처: per001_r3/overhead/overhead.json; blocks·decisions. measured; 판정은 4블록 평균·90% t CI, 기준 5%; 최종 측정은 코드 확정 후.
 
 ### PT-002 및 재기동 참고
 

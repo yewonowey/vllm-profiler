@@ -318,15 +318,15 @@ def finalize(root, opprofile_dir=None):
     compared = comparisons(valid)
     tables = datasets(records)
     if opprofile_dir is not None:
-        for path in sorted(Path(opprofile_dir).rglob("operators.csv")):
-            if path.resolve() == (root / "dataset/operators.csv").resolve():
+        for path in sorted(Path(opprofile_dir).rglob("operators*.csv")):
+            if path.resolve() == (root / "dataset" / path.name).resolve():
                 continue
             with path.open() as stream:
                 rows = [
                     dict(r, operator_source=str(path.relative_to(opprofile_dir)))
                     for r in csv.DictReader(stream)
                 ]
-            tables.setdefault("operators", []).extend(rows)
+            tables.setdefault(path.stem, []).extend(rows)
     out = root / "dataset"
     out.mkdir(exist_ok=True)
     write_csv(root / "results.csv", tables["runs"])

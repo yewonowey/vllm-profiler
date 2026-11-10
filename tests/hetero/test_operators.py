@@ -61,6 +61,21 @@ class OperatorTests(unittest.TestCase):
                 if dropped or unfinished:
                     self.assertEqual(result[0]["reason"], ops.TRACE_ERROR)
 
+    def test_types(self):
+        cases = [
+            ("gpu", "gemm", "kernel", "matmul"),
+            ("gpu", "flash_fwd", "kernel", "attention"),
+            ("npu", "256_linear_19_14", "Neural Engine Clusters", "linear"),
+            ("npu", "256_linear_19", "Neural DMA", "DMA"),
+            ("npu", "unknown_12", "Neural Engine Clusters", "기타"),
+        ]
+        for device, name, category, kind in cases:
+            rows = [dict(name=name, category=category, duration_ns=1000)]
+            result = ops.aggregate_types(rows, device)
+            self.assertEqual(
+                (result[0]["operator_type"], result[0]["ratio"]), (kind, 1)
+            )
+
     def test_aggregate(self):
         cat = "kernel"
         cases = [("a", cat, 2), ("a", cat, 4), ("b", cat, 3), ("a", "cpu_op", 8)]
@@ -104,8 +119,10 @@ class OperatorTests(unittest.TestCase):
             out = root / "stats"
             ops.main(["--input", str(root), "--out", str(out)])
             self.assertTrue((out / "operators.md").is_file())
+            self.assertTrue((out / "operators_by_type.csv").is_file())
             (root / "scenarios.json").write_text('{"scenarios": []}')
             self.assertEqual(finalize_results.finalize(root, out), 0)
+            self.assertTrue((root / "dataset/operators_by_type.csv").is_file())
             with (root / "dataset/operators.csv").open() as stream:
                 self.assertEqual(next(csv.DictReader(stream))["name"], "gemm")
 
