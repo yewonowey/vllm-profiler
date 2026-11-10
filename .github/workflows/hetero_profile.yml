@@ -1,0 +1,117 @@
+name: Hetero profile
+"on":
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: Scenario JSON file
+        default: tools/hetero/scenarios/initial.json
+        required: true
+        type: string
+      result_name:
+        description: Folder name under HETERO_RESULTS_ROOT
+        required: true
+        type: string
+      per001:
+        description: Run PER-001 after the sweep
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: hetero-pdd-hardware
+  cancel-in-progress: false
+jobs:
+  profile:
+    runs-on: [self-hosted, hetero-pdd]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Sweep, finalize and optional PER-001
+        id: profile
+        env:
+          HETERO_ENV_FILE: ${{ vars.HETERO_ENV_FILE }}
+          MODELS_FROM_VARS: ${{ vars.HETERO_MODELS_JSON }}
+          RESULTS_FROM_VARS: ${{ vars.HETERO_RESULTS_ROOT }}
+          SCENARIOS: ${{ inputs.scenarios }}
+          RESULT_NAME: ${{ inputs.result_name }}
+          PER001: ${{ inputs.per001 }}
+        shell: bash
+        run: |
+          set -a
+          source "${HETERO_ENV_FILE:?Set repository variable HETERO_ENV_FILE}"
+          set +a
+          export HETERO_MODELS_JSON="${HETERO_MODELS_JSON:-$MODELS_FROM_VARS}"
+          export HETERO_RESULTS_ROOT="${HETERO_RESULTS_ROOT:-$RESULTS_FROM_VARS}"
+          "$CUDA_PY" - <<'PY'
+          import csv, json, os, subprocess, sys
+          from pathlib import Path
+          from tools.hetero.profiler import run, sweep
+          name = os.environ["RESULT_NAME"]
+          if not run.NAME.fullmatch(name):
+              raise ValueError("result_name must be a single folder name")
+          root = sweep.outside_repo(Path(os.environ["HETERO_RESULTS_ROOT"]) / name)
+          models = json.loads(os.environ["HETERO_MODELS_JSON"])
+          spec = json.loads(Path(os.environ["SCENARIOS"]).read_text())
+          per = None
+          if os.environ["PER001"] == "true":
+              key = os.getenv("HETERO_PER001_SCENARIO", "s2_pdd")
+              per = next(s for s in spec["scenarios"] if s["name"] == key)
+              if per["configuration"] != "pdd" or len(per["workloads"]) != 1:
+                  raise ValueError("PER-001 requires one PDD workload")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as out:
+              out.write(f"result_dir={root}\n")
+          command = [sys.executable, "-m", "tools.hetero.profiler.sweep",
+                     "--scenarios", os.environ["SCENARIOS"], "--sweep-dir", str(root)]
+          for key, path in models.items():
+              command += ["--model", f"{key}={path}"]
+          if os.getenv("HETERO_CACHE_ROOT"):
+              command += ["--cache-root", os.environ["HETERO_CACHE_ROOT"]]
+          codes = [subprocess.run(command).returncode]
+          codes.append(subprocess.run([sys.executable, "tools/hetero/finalize_results.py",
+                                      "--sweep-dir", str(root)]).returncode)
+          if per:
+              work = root / "per001_workload.json"
+              work.write_text(json.dumps(per["workloads"]))
+              options = {k.replace("-", "_"): v for k, v in per["service_args"].items()}
+              options.update(configuration="pdd", run_dir=root / "per001", workload=work,
+                             model_path=models[per["model"]])
+              options.setdefault("model_name", per["model"])
+              options = {k: json.dumps(v) if isinstance(v, (dict, list)) else v
+                         for k, v in options.items()}
+              codes.append(subprocess.run([sys.executable, "-m", "tools.hetero.profiler.overhead",
+                                           *run.flags(**options)]).returncode)
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as out:
+              out.write(f"## {name}\n\nExit codes (sweep, finalize, optional PER-001): {codes}\n")
+              for file, fields in [
+                  ("results.csv", ["scenario", "workload", "run_status", "analysis_status",
+                                   "output_tokens_per_second", "makespan_seconds"]),
+                  ("comparison.csv", ["pair_id", "workload", "comparison",
+                                      "throughput_improvement_percent_vs_b0",
+                                      "makespan_reduction_percent_vs_b0"]),
+              ]:
+                  out.write(f"\n### {file}\n\n")
+                  if not (root / file).is_file():
+                      out.write("Missing output; inspect the failed step.\n")
+                      continue
+                  out.write("| " + " | ".join(fields) + " |\n|" + "---|" * len(fields) + "\n")
+                  with (root / file).open() as stream:
+                      for row in csv.DictReader(stream):
+                          out.write("| " + " | ".join(row.get(k, "").replace("|", "/").replace("\n", " ")
+                                                     for k in fields) + " |\n")
+          raise SystemExit(int(any(codes)))
+          PY
+      - name: Upload CSV and summaries (no raw traces)
+        if: ${{ always() && steps.profile.outputs.result_dir != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hetero-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.profile.outputs.result_dir }}/results.csv
+            ${{ steps.profile.outputs.result_dir }}/comparison.csv
+            ${{ steps.profile.outputs.result_dir }}/dataset/*.csv
+            ${{ steps.profile.outputs.result_dir }}/dataset/DATA_DICTIONARY.md
+            ${{ steps.profile.outputs.result_dir }}/runs/*/*/profile/summary.json
+            ${{ steps.profile.outputs.result_dir }}/per001/overhead/overhead.json
+            ${{ steps.profile.outputs.result_dir }}/per001/overhead/overhead.md
+          if-no-files-found: warn
