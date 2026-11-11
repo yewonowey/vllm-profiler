@@ -312,7 +312,7 @@
           "name": "i2048_o256",
           "input_tokens": 2048,
           "output_tokens": 256,
-          "requests": 32,
+          "requests": 48,
           "seed": 20260924,
           "warmup": 1,
           "slots": {
@@ -361,7 +361,7 @@
           "name": "i2048_o256",
           "input_tokens": 2048,
           "output_tokens": 256,
-          "requests": 32,
+          "requests": 48,
           "seed": 20260924,
           "warmup": 1,
           "concurrency": 8
@@ -596,7 +596,7 @@
           "name": "i2048_o256",
           "input_tokens": 2048,
           "output_tokens": 256,
-          "requests": 32,
+          "requests": 48,
           "seed": 20260924,
           "warmup": 1,
           "slots": {
@@ -645,7 +645,7 @@
           "name": "i2048_o256",
           "input_tokens": 2048,
           "output_tokens": 256,
-          "requests": 32,
+          "requests": 48,
           "seed": 20260924,
           "warmup": 1,
           "concurrency": 4
@@ -690,7 +690,7 @@
           "name": "i2048_o256",
           "input_tokens": 2048,
           "output_tokens": 256,
-          "requests": 32,
+          "requests": 64,
           "seed": 20260924,
           "warmup": 1,
           "slots": {
@@ -739,7 +739,7 @@
           "name": "i2048_o256",
           "input_tokens": 2048,
           "output_tokens": 256,
-          "requests": 32,
+          "requests": 64,
           "seed": 20260924,
           "warmup": 1,
           "concurrency": 8
@@ -1251,7 +1251,7 @@
           "name": "i4096_o1",
           "input_tokens": 4096,
           "output_tokens": 1,
-          "requests": 280,
+          "requests": 512,
           "seed": 20260924,
           "warmup": 1,
           "slots": {
@@ -1334,7 +1334,7 @@
           "name": "i4096_o1",
           "input_tokens": 4096,
           "output_tokens": 1,
-          "requests": 280,
+          "requests": 512,
           "seed": 20260924,
           "warmup": 1,
           "concurrency": 8
