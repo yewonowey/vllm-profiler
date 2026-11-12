@@ -39,6 +39,19 @@ class FigureSmoke(unittest.TestCase):
                     energy={"total": {"energy_per_output_token_j_est": {"value": 1}}},
                 )
                 rows.append(row)
+            for row in rows:
+                row.update(run_status="PASS", analysis_status="PASS", returncode=0)
+            rows.insert(0, dict(rows[0], run_id="old", phase_resources={}))
+            for status, code in (("INCOMPLETE", 0), ("PASS", 1)):
+                rows.append(
+                    dict(
+                        rows[1],
+                        run_id="failed",
+                        phase_resources={},
+                        analysis_status=status,
+                        returncode=code,
+                    )
+                )
             pairs = [
                 dict(
                     pair_id="s2",
