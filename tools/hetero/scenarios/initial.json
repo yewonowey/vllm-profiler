@@ -1429,7 +1429,8 @@
           "uncapped_requests": 16,
           "capped_at_512": false
         }
-      }
+      },
+      "note": "설정 호환성 문제 재현용: HND producer에서는 layout_reorder=0을 사용한다. reorder 1은 실제 NHD producer에만 사용하며, S7 reorder 1은 HND와의 비호환 조합을 재현한다."
     },
     {
       "name": "s7_pdd_r1",
@@ -1474,7 +1475,8 @@
           "uncapped_requests": 16,
           "capped_at_512": false
         }
-      }
+      },
+      "note": "설정 호환성 문제 재현용: HND producer에서는 layout_reorder=0을 사용한다. reorder 1은 실제 NHD producer에만 사용하며, S7 reorder 1은 HND와의 비호환 조합을 재현한다."
     },
     {
       "name": "s8_pdd",

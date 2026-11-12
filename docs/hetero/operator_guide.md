@@ -1,6 +1,6 @@
 # 운영 안내서
 
-문서 갱신: 2026-11-11. 아래 시험·자료 확인일은 2026-11-10이다.
+문서 갱신: 2026-11-12. 아래 시험·자료 확인일은 2026-11-10이다.
 
 기준: 2026-11-10. 운영 조치는 아래 코드·실측 사례에 근거하며 자동 적용하지 않는다.
 명령 전 운영 환경 파일을 source하고 실제 경로 값은 저장소 밖에서 관리한다.
@@ -20,6 +20,15 @@
 실측 worktree는 `git worktree add --detach "$MEASURE_TREE" "$MEASURE_COMMIT"` 형태로 만든다.
 커밋 전에 작업 중인 디렉터리를 그대로 측정 경로로 쓰지 않는다.
 문서 수정도 추적 변경이므로 clean 검사에 걸릴 수 있다. 원인을 숨기려고 검사 코드를 끄지 않는다.
+
+## S7 및 KV 레이아웃 지원 조건
+
+GPU producer가 `VLLM_KV_CACHE_LAYOUT=HND`이면 `VLLM_RBLN_PDD_LAYOUT_REORDER=0`을 쓴다.
+reorder 1은 producer가 실제로 NHD 배치일 때만 쓴다.
+producer의 commands.sh 설정뿐 아니라 prefill 로그의 실제 KV cache layout도 확인한다.
+S7의 HND+reorder 1은 **설정 호환성 문제 재현용**이며 정상 성능 최적화 조건이 아니다.
+NHD 조건의 출력 정합성은 사용 전 별도 검증하며, 향후 핸드셰이크 상대 layout 기반 자동 선택을 제안한다.
+근거: sweep4 S7 prefill의 HND·FLASH_ATTN 로그와 출력 토큰 대조, [분석 보고서](final_report_analysis.md)의 S7 절.
 
 ## 캐시 관리
 

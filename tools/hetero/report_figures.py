@@ -68,6 +68,14 @@ def panel(ax, title, records, kind="bar"):
 def generate(root, operators, overhead, out):
     plt.rcParams.update({"font.family": "NanumGothic", "axes.unicode_minus": False})
     rows, pairs = read_csv(root / "results.csv"), read_csv(root / "comparison.csv")
+    latest = {}
+    for row in rows:
+        if (
+            row["run_status"] == row["analysis_status"] == "PASS"
+            and row["returncode"] == "0"
+        ):
+            latest[row["scenario"], row["workload"]] = row
+    rows = list(latest.values())
     series = read_csv(root / "dataset/resource_timeseries.csv")
     types = [r for p in operators.rglob("operators_by_type.csv") for r in read_csv(p)]
     out.mkdir(parents=True, exist_ok=True)

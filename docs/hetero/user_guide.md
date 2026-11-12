@@ -1,6 +1,6 @@
 # 사용자 안내서
 
-문서 갱신: 2026-11-11. 아래 시험·자료 확인일은 2026-11-10이다.
+문서 갱신: 2026-11-12. 아래 시험·자료 확인일은 2026-11-10이다.
 
 기준: 2026-11-10, 현재 CLI·실측 결과. 기존 [profiler.md](profiler.md)의 실행 절차를 정리했다.
 실행 전 `source "$HETERO_ENV_FILE"`로 운영자가 준비한 환경 파일을 읽는다.
@@ -34,6 +34,15 @@ SERVICE_ARGS=(--model-path "$MODEL_PATH" --model-name qwen3-0.6b   --dtype float
 시작한 프로세스는 finally에서 정리한다. 오류가 났으면 run.json의 실패 단계와 service/logs를 확인한다.
 analysis_status가 INCOMPLETE이면 run_status PASS만으로 계측 성공이라 판단하지 않는다.
 
+## S7 및 KV 레이아웃 지원 조건
+
+GPU producer가 `VLLM_KV_CACHE_LAYOUT=HND`이면 `VLLM_RBLN_PDD_LAYOUT_REORDER=0`을 쓴다.
+reorder 1은 producer가 실제로 NHD 배치일 때만 쓴다.
+producer의 commands.sh 설정뿐 아니라 prefill 로그의 실제 KV cache layout도 확인한다.
+S7의 HND+reorder 1은 **설정 호환성 문제 재현용**이며 정상 성능 최적화 조건이 아니다.
+NHD 조건의 출력 정합성은 사용 전 별도 검증하며, 향후 핸드셰이크 상대 layout 기반 자동 선택을 제안한다.
+근거: sweep4 S7 prefill의 HND·FLASH_ATTN 로그와 출력 토큰 대조, [분석 보고서](final_report_analysis.md)의 S7 절.
+
 ## 시나리오 스윕과 재개
 
 ```bash
@@ -41,6 +50,10 @@ analysis_status가 INCOMPLETE이면 run_status PASS만으로 계측 성공이라
 ```
 
 `--only s1_b0 --only s1_pdd`처럼 반복하여 일부만 실행할 수 있다.
+성공 기록은 스윕 폴더의 `scenarios.json`에 `attempts`(path·returncode)로 남는다.
+재개 시 마지막 attempt의 종료코드0과 모든 workload summary의 run_status·analysis_status PASS를 함께 확인한다.
+`runs/`만 다른 폴더로 복사해서는 재개되지 않는다. 기록 파일에 이전 성공 실행이 없으면 새 접미사로 실행한다.
+시나리오 정의를 바꾸면 새 `--sweep-dir`가 필요하다. 제한 재측정에는 `--only`를 명시한다.
 같은 pair의 요청 수·입출력·seed, equal_concurrency의 슬롯 합계/동시성이 같아야 한다.
 성공한 시나리오는 재실행에서 건너뛰며 실패한 실행은 새 접미사 폴더에 남긴다.
 모델 키에 연결한 실제 경로는 실행 인자로만 제공한다. 캐시 호환성은 [운영 안내](operator_guide.md)를 참조한다.
