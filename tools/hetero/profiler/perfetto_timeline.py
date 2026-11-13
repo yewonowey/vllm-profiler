@@ -16,7 +16,7 @@ from tools.hetero.profiler import analysis, expected, resources, server
 from tools.hetero.profiler.common import live_rows
 
 ROOT = "Heterogeneous LLM Processing"
-ORDER = ["Request", "Prefill", "KV Transfer", "KV Layout (H2D+reorder)", "Decode"]
+ORDER = ["Request", "Prefill", "KV Transfer", "KV Load (H2D + transform)", "Decode"]
 ROLES = dict(
     gpu="GPU",
     npu0="NPU0",
@@ -95,7 +95,7 @@ def slices(rows, ids, spans, events, anchors, trace):
             rid = reverse.get(expected.engine_request_base(e.get("req_id")), "")
             name = {
                 "kv_xfer_done": "KV Transfer",
-                "kv_h2d": "KV Layout (H2D+reorder)",
+                "kv_h2d": "KV Load (H2D + transform)",
                 "step": "Decode Step",
             }.get(e["kind"])
             if not name or (e["kind"] == "step" and e.get("phase") != "decode"):

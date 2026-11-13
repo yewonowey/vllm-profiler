@@ -344,3 +344,5 @@ GitHub Actions 입력·저장소 변수는 [시험 절차](test_procedure.md)의
 
 입력/정렬 실패는 GPU not_collected 사유를 확인한다. 기존 타임라인 validation PASS만으로
 GPU 병합 성공을 판단하지 않는다. deep 지연은 분석 전용이며 GPU 커널과 NPU step의 단위가 다르다.
+
+타임라인의 KV 적재 트랙·slice 이름은 `KV Load (H2D + transform)`이다.

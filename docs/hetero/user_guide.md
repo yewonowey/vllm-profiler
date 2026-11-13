@@ -178,3 +178,5 @@ GPU 그룹 아래 GPU kernels (stream N), CUDA runtime, CPU ops(최상위만)를
 status=estimated이며 anchor 변화는 절대 오차 상한이 아니다. start_profile 대비 차이는 시작 지연이다.
 GPU 이벤트에 요청 ID가 없으므로 요청별 커널 직접 연결을 보증하지 않는다.
 **deep 모드 지연 수치는 분석 전용**이며 **GPU만 커널 단위, NPU는 step 단위**다.
+
+타임라인의 KV 적재 트랙·slice 이름은 `KV Load (H2D + transform)`이다.

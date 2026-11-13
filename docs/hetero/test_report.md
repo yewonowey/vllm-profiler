@@ -238,3 +238,5 @@ GPU gzip은 정상이며 stop_profile timeout 이력은 남아 있다. 화면 �
 anchor 변화와 시작 지연을 절대 clock 오차로 해석하지 않는다. 절대 오차는 미확인이다.
 **deep 모드 지연 수치는 분석 전용**, **GPU만 커널 단위, NPU는 step 단위**다.
 근거: 각 workload/timeline_validation.json, 로컬 deep_gpu_merge_2026-11-13.md.
+
+타임라인의 KV 적재 트랙·slice 이름은 `KV Load (H2D + transform)`이다.

@@ -67,6 +67,12 @@ class TimelineTests(unittest.TestCase):
         result = timeline.slices(*args)
         self.assertEqual(len(result), 5)
         self.assertEqual(sum(x["args"].get("status") == "추정" for x in result), 2)
+        fields = dict(h2d_ns=1, reorder_ns=2, num_blocks=3, bytes_est=4)
+        event = dict(kind="kv_h2d", start_ns=10, end_ns=20, **fields)
+        result = timeline.slices([], {}, {}, {"decode0": [event]}, [], True)[0]
+        self.assertEqual(result["name"], "KV Load (H2D + transform)")
+        self.assertEqual(result["track"][1], result["name"])
+        self.assertEqual(result["args"], fields)
 
     @unittest.skipUnless(
         os.getenv("PDD_TOOLS_PY") and os.getenv("PERFETTO_TP_BIN"),

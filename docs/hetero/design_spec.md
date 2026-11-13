@@ -297,7 +297,7 @@ MANIFEST는 자기 자신을 제외한 납품 파일 해시다. 실제 rc1 설�
 | GPU·NPU0·NPU1 또는 Prefill(GPU)·Decode(NPU0)·Decode(NPU1) / request_id | Server Queue, Prefill, Decode | trace: OTEL latency 속성과 clock anchor |
 | 같은 서버 / request_id | Prefill, Decode(status=추정) | monitor: send→first_output→completed, 처리 장치 대응 |
 | decoder / KV Transfer / request_id | kv_xfer_start→kv_xfer_done | 정확한 요청 ID 대응 |
-| decoder / KV Layout (H2D+reorder) / request_id | start_ns→end_ns | h2d_ns·reorder_ns·num_blocks·bytes_est 인자 |
+| decoder / KV Load (H2D + transform) / request_id | start_ns→end_ns | h2d_ns·reorder_ns·num_blocks·bytes_est 인자 |
 | decoder / Decode Step / rank | span_start_ns→span_end_ns | decode step 관측 구간 |
 | Resources / gpu·npu0·npu1 | utilization(%), power(W), memory(bytes) | classify_devices의 UUID/PCI 대응 |
 | Resources / system | cpu(%), memory(bytes) | all-smi |
@@ -308,7 +308,7 @@ OTEL REALTIME은 resources.mono와 loadgen clock_anchor를 그대로 사용한�
 Prefill 끝은 span 시작+TTFT, 시작은 끝−prefill 경과시간이며,
 Decode는 첫 토큰부터 decode 경과시간만큼이다(기존 단계 분석과 같은 정의).
 장치 idle·mixed, 누락 span의 추정 구간은 만들지 않는다. monitor만 명시적으로 추정한다.
-Flow는 Client→Prefill→KV Transfer→KV Layout→Decode 중 실제 존재하는 단계만 잇는다.
+Flow는 Client→Prefill→KV Transfer→KV Load→Decode 중 실제 존재하는 단계만 잇는다.
 같은 시작 시각에는 이 순서를 적용해 연결이 유실되지 않게 하고 ID·트랙·시각을 정렬한다.
 
 TraceProtoBuilder의 primary_trace_clock과 이벤트 시계는 CLOCK_MONOTONIC(3)이다.
@@ -319,6 +319,8 @@ BOOTTIME을 MONOTONIC의 같은 값 별칭으로 선언한다. 실제 호스트 
 trace_processor 검증: severity=error/data_loss의 비영 항목, 음수/미종료 slice,
 변환 전후 트랙 UUID별 slice 수·전체 slice 수·flow 수·counter 수를 대조한다.
 음수·역전 입력 구간은 숨기지 않고 검증 FAIL을 기록한다. 실제 자료의 이중 변환은 바이트 동일성도 확인했다.
+
+타임라인의 KV Load (H2D + transform) 구간은 분석 지표의 layout 단계(M09a H2D + M09b reorder)와 같은 구간이다.
 
 ## WP8 deep GPU 확장(2026-11-13)
 
