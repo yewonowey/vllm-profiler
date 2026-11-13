@@ -157,3 +157,24 @@ monitor의 Prefill·Decode에는 `status=추정` 인자가 있다. H2D와 reorde
 실행 중 요청은 In-flight requests 그래프로 표시하며 Request 인자에 queue_wait_s와 arrival을 보존한다.
 `--per-request-tracks`로 요청별 배치를 선택할 수 있다. `--flows all|sample|none`의 기본은 sample이며,
 64개 초과 요청에서는 ID 순서로 고르게 고른 16개만 연결한다. slice 자체는 모두 보존한다.
+
+## 서빙 deep GPU trace 병합
+
+`GPU_TRACE`에는 서비스 실행의 torch_traces/gpu(B0) 또는 prefill(PDD) 아래
+kernel 카테고리를 포함한 rank0 json.gz 한 파일을 지정한다. async_llm·NPU 파일은 선택하지 않는다.
+
+```bash
+"$PDD_TOOLS_PY" tools/hetero/profiler/perfetto_timeline.py \
+  --run-dir "$RUN_DIR" --workload "$WORKLOAD" --gpu-trace "$GPU_TRACE"
+```
+
+기존 timeline.pftrace를 갱신하며 별도 저장은 --out을 쓴다. --gpu-trace는 workload 하나에서만 사용한다.
+GPU 그룹 아래 GPU kernels (stream N), CUDA runtime, CPU ops(최상위만)를 추가한다.
+본측정에 완전히 포함된 구간만 표시하며 제외 개수·이유는 timeline_validation.json의 gpu_trace에 남긴다.
+시각 기준이 없거나 파일이 손상되면 GPU 파일을 합치지 않고 not_collected 사유를 기록한다.
+전체 validation PASS와 별개로 gpu_trace.status도 확인한다.
+
+정렬은 baseTimeNanoseconds와 ts(µs), 실행 clock anchor를 사용한다.
+status=estimated이며 anchor 변화는 절대 오차 상한이 아니다. start_profile 대비 차이는 시작 지연이다.
+GPU 이벤트에 요청 ID가 없으므로 요청별 커널 직접 연결을 보증하지 않는다.
+**deep 모드 지연 수치는 분석 전용**이며 **GPU만 커널 단위, NPU는 step 단위**다.

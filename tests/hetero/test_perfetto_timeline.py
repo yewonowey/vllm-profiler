@@ -19,6 +19,33 @@ def write(path, data):
 
 
 class TimelineTests(unittest.TestCase):
+    @unittest.skipUnless(os.getenv("PDD_TOOLS_PY"), "tools Python unset")
+    def test_gpu_clock_filter_and_lanes(self):
+        anchors = [dict(time_ns=10**9, monotonic_ns=2 * 10**9)]
+        events = []
+        for cat, ts, dur in (
+            ("kernel", 100, 20),
+            ("gpu_memcpy", 101, 5),
+            ("cuda_runtime", 100, 10),
+            ("cuda_runtime", 102, 10),
+            ("cpu_op", 100, 20),
+            ("cpu_op", 103, 2),
+            ("kernel", 900, 10),
+            ("python_function", 100, 1),
+        ):
+            events.append(dict(cat=cat, ts=ts, dur=dur, name=cat, ph="X", tid=1, pid=1))
+        data = dict(baseTimeNanoseconds=10**9, traceEvents=events)
+        rows, report = timeline.gpu_slices(data, anchors, (2, 2.0005), "gpu")
+        self.assertEqual((report["included"], report["excluded"]), (5, 3))
+        self.assertEqual(min(x["start"] for x in rows), 2000100000)
+        runtime = [x for x in rows if x["name"] == "cuda_runtime"]
+        self.assertEqual(len({x["track"] for x in runtime}), 2)
+        self.assertEqual(sum(x["name"] == "cpu_op" for x in rows), 1)
+        for key in ("baseTimeNanoseconds",):
+            invalid = {k: v for k, v in data.items() if k != key}
+            rows, report = timeline.gpu_slices(invalid, anchors, (2, 3), "gpu")
+            self.assertEqual((rows, report["status"]), ([], "not_collected"))
+
     def test_lanes(self):
         for intervals, wanted in (
             ([(0, 3, "a"), (1, 2, "b")], [0, 1]),

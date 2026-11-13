@@ -332,3 +332,15 @@ GitHub Actions 입력·저장소 변수는 [시험 절차](test_procedure.md)의
 기본 출력은 `<service_run>/<workload>/timeline.pftrace`다.
 --sweep-dir는 finalize와 같은 마지막 성공 attempt/workload 규칙을 따른다.
 의존성·오프라인 UI 사용법은 [사용자 안내서](user_guide.md#관측-타임라인-만들기wp8)를 따른다.
+
+## WP8 deep GPU 옵션
+
+| 함수/CLI | 동작 |
+|---|---|
+| gpu_slices(data, anchors, window, role) | 파싱한 chrometrace를 MONOTONIC slice 목록과 포함/제외·정렬 진단으로 변환 |
+| merge_gpu(path, anchors, window, role, entries, controls) | gzip 읽기, GPU 구간 변환, OTEL 포함률·시작 지연 계산 |
+| convert(..., gpu_trace=None) | GPU 파일을 선택적으로 합치며 validation의 gpu_trace에 결과 기록 |
+| --gpu-trace FILE | workload 하나에 GPU worker json.gz 지정; 기본은 병합 없음 |
+
+입력/정렬 실패는 GPU not_collected 사유를 확인한다. 기존 타임라인 validation PASS만으로
+GPU 병합 성공을 판단하지 않는다. deep 지연은 분석 전용이며 GPU 커널과 NPU step의 단위가 다르다.

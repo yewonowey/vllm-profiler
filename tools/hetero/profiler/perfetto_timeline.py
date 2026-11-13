@@ -2,6 +2,7 @@
 """Convert existing observations to a deterministic MONOTONIC Perfetto trace."""
 
 import argparse
+import gzip
 import json
 import os
 import sys
@@ -146,7 +147,139 @@ def assign_lanes(entries):
     return ends
 
 
-def convert(root, workload, out=None, flows="sample", per_request_tracks=False):
+def gpu_slices(data, anchors, window, role):
+    """Align Kineto microseconds plus its Unix-ns base; retain top-level CPU ops."""
+    report = dict(
+        method="baseTimeNanoseconds + ts*1000 -> clock_anchor -> MONOTONIC",
+        status="not_collected",
+        reason=None,
+        input=len(data.get("traceEvents", [])),
+    )
+    report.update(included=0, excluded=report["input"])
+    if not anchors or not isinstance(data.get("baseTimeNanoseconds"), int):
+        report["reason"] = "missing clock anchor or baseTimeNanoseconds"
+        return [], report
+    offsets = [a["time_ns"] - a["monotonic_ns"] for a in anchors]
+    report.update(
+        status="estimated",
+        anchor_drift_ms=(max(offsets) - min(offsets)) / 1e6,
+        estimated_error_ms=None,
+        error_reason="absolute clock/CUPTI error unmeasured",
+    )
+    categories = ("kernel", "gpu_memcpy", "cuda_runtime", "cpu_op")
+    selected = [
+        e
+        for e in data["traceEvents"]
+        if e.get("ph") == "X" and e.get("cat") in categories
+    ]
+    if not any(e["cat"] == "kernel" for e in selected):
+        report.update(status="not_collected", reason="no GPU kernels in selected file")
+        return [], report
+    result, covered, skipped = [], {}, Counter()
+    for e in sorted(selected, key=lambda e: (e["ts"], -e["dur"], str(e.get("tid")))):
+        category, args = e["cat"], e.get("args", {})
+        key = e.get("pid"), e.get("tid")
+        if category == "cpu_op":
+            end = e["ts"] + e["dur"]
+            if end <= covered.get(key, float("-inf")):
+                skipped["nested_cpu_ops"] += 1
+                continue
+            covered[key] = end
+        real = data["baseTimeNanoseconds"] + round(e["ts"] * 1000)
+        a = round(resources.mono(real, anchors) * 1e9)
+        b = a + round(e["dur"] * 1000)
+        if a < 0 or b < a:
+            report.update(
+                status="not_collected", reason="negative/reversed GPU timestamp"
+            )
+            return [], report
+        if not window[0] * 1e9 <= a <= b <= window[1] * 1e9:
+            skipped["outside_measurement"] += 1
+            continue
+        stream = args.get("stream", e.get("tid"))
+        name = (
+            f"GPU kernels (stream {stream})"
+            if category in categories[:2]
+            else "CUDA runtime"
+            if category == "cuda_runtime"
+            else "CPU ops(최상위만)"
+        )
+        fields = dict(
+            category=category,
+            original_ts_us=e["ts"],
+            original_dur_us=e["dur"],
+            alignment=report["method"],
+            alignment_status="estimated",
+            anchor_drift_ms=report["anchor_drift_ms"],
+            estimated_error_ms="unknown",
+            pid=e.get("pid"),
+            tid=e.get("tid"),
+            correlation=args.get("correlation"),
+        )
+        result.append(
+            dict(
+                track=(ROLES[role], name),
+                name=e["name"],
+                start=a,
+                end=b,
+                rid="",
+                args=fields,
+            )
+        )
+    skipped["other_categories_or_phases"] = report["input"] - len(selected)
+    report.update(
+        included=len(result),
+        excluded=report["input"] - len(result),
+        excluded_by_reason=dict(skipped),
+    )
+    lanes = assign_lanes(result)
+    for x in result:
+        if len(lanes[x["track"][:-1]]) == 1:
+            x["track"] = x["track"][:-1]
+    return result, report
+
+
+def merge_gpu(path, anchors, window, role, entries, controls):
+    """Read GPU trace without fitting timestamps to server spans."""
+    try:
+        with gzip.open(path, "rt") as stream:
+            data = json.load(stream)
+        extra, report = gpu_slices(data, anchors, window, role)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return [], dict(status="not_collected", reason=f"{path.name}: {exc}")
+    report["file"] = path.name
+    if not extra:
+        return extra, report
+    intervals = [
+        (x["start"], x["end"])
+        for x in entries
+        if x["track"][0] == ROLES[role] and x["name"] in ("Prefill", "Decode")
+    ]
+    kernels = [x for x in extra if x["args"]["category"] == "kernel"]
+    contained = sum(
+        any(a <= x["start"] <= x["end"] <= b for a, b in intervals) for x in kernels
+    )
+    report.update(
+        kernel_count=len(kernels),
+        kernels_inside_single_server_interval=contained,
+        kernel_containment_ratio=contained / len(kernels) if kernels else None,
+        request_join="temporal containment only; no kernel request ID",
+    )
+    first = min(e["ts"] for e in data["traceEvents"] if "ts" in e)
+    starts = [
+        c for c in controls if c["role"] == role and c["action"] == "start_profile"
+    ]
+    if starts:
+        real = data["baseTimeNanoseconds"] + round(first * 1000)
+        report["first_event_after_start_profile_ms"] = (
+            resources.mono(real, anchors) - starts[0]["mono_ns"] / 1e9
+        ) * 1000
+    return extra, report
+
+
+def convert(
+    root, workload, out=None, flows="sample", per_request_tracks=False, gpu_trace=None
+):
     """Write one trace and its SQL validation; return validation metadata."""
     from perfetto.trace_builder.proto_builder import TraceProtoBuilder
     from perfetto.trace_processor import TraceProcessor, TraceProcessorConfig
@@ -232,6 +365,22 @@ def convert(root, workload, out=None, flows="sample", per_request_tracks=False):
                 x["track"] = x["track"][:-1] + (
                     x["track"][-1].replace("Lane", "Batch slot"),
                 )
+    gpu = dict(
+        status="not_requested",
+        npu_reason="NPU torch trace has no device intervals; step events retained",
+    )
+    if gpu_trace:
+        role = "prefill" if config["configuration"] == "pdd" else "gpu"
+        extra, details = merge_gpu(
+            gpu_trace,
+            anchors,
+            window,
+            role,
+            entries,
+            list(live_rows(folder / "profile_control.jsonl")),
+        )
+        gpu.update(details)
+        entries.extend(extra)
     for name, begin, end in (
         ("Queued requests", "scheduled_arrival", "assigned"),
         ("In-flight requests", "actual_send", "completed"),
@@ -407,6 +556,7 @@ def convert(root, workload, out=None, flows="sample", per_request_tracks=False):
         track_count=track_count,
         lanes=sum(p[-1].startswith(("Lane ", "Batch slot ")) for p in paths if p),
         request_count=len(rows),
+        gpu_trace=gpu,
     )
     (folder / "timeline_validation.json").write_text(
         json.dumps(result, indent=2) + "\n"
@@ -421,6 +571,7 @@ def main():
     group.add_argument("--sweep-dir", type=Path)
     parser.add_argument("--workload")
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--gpu-trace", type=Path)
     parser.add_argument("--flows", choices=("all", "sample", "none"), default="sample")
     parser.add_argument("--per-request-tracks", action="store_true")
     args = parser.parse_args()
@@ -451,10 +602,12 @@ def main():
                 for p in sorted(args.run_dir.glob("*/requests.jsonl"))
             ]
         )
-    if args.out and len(jobs) != 1:
-        parser.error("--out requires exactly one workload")
+    if (args.out or args.gpu_trace) and len(jobs) != 1:
+        parser.error("--out/--gpu-trace requires exactly one workload")
     results = [
-        convert(root, name, args.out, args.flows, args.per_request_tracks)
+        convert(
+            root, name, args.out, args.flows, args.per_request_tracks, args.gpu_trace
+        )
         for root, name in jobs
     ]
     failed = [

@@ -319,3 +319,22 @@ BOOTTIME을 MONOTONIC의 같은 값 별칭으로 선언한다. 실제 호스트 
 trace_processor 검증: severity=error/data_loss의 비영 항목, 음수/미종료 slice,
 변환 전후 트랙 UUID별 slice 수·전체 slice 수·flow 수·counter 수를 대조한다.
 음수·역전 입력 구간은 숨기지 않고 검증 FAIL을 기록한다. 실제 자료의 이중 변환은 바이트 동일성도 확인했다.
+
+## WP8 deep GPU 확장(2026-11-13)
+
+선택 옵션 --gpu-trace로 GPU worker의 Kineto JSON gzip 한 파일을 읽는다.
+원본을 변경하지 않으며 측정/분석 모듈을 호출해 재측정하지 않는다.
+baseTimeNanoseconds(Unix ns)+ts(µs)×1000을 resources.mono의 clock anchor로 변환한다.
+displayTimeUnit=ms를 ts 단위로 오해하지 않는다. 서버 구간에 맞춘 임의 shift는 하지 않는다.
+
+GPU kernels (stream N)은 kernel/memcpy를 포함한다. CUDA runtime과 CPU ops(최상위만)는
+겹치면 lane으로 나눈다. CPU 최상위 판정은 원본 pid/tid별 포함 관계이며 Python 호출은 제외한다.
+측정 경계를 가로지르는 이벤트도 제외 수에 포함한다. 원본 시각·변환 방식은 slice 인자로 남긴다.
+변환 근거/파일 오류는 해당 GPU 파일만 not_collected 처리하고 validation에 사유를 기록한다.
+NPU torch trace는 장치 구간이 없어 합치지 않고 기존 step 이벤트를 유지한다.
+
+정렬 검증은 커널이 GPU 역할의 OTEL Prefill/Decode 구간 중 하나에 완전히 들어오는 비율이다.
+이는 요청 ID 직접 매칭이 아니며 중첩 요청의 커널 귀속을 확정하지 않는다.
+anchor_drift_ms는 clock offset 변화, first_event_after_start_profile_ms는 시작 지연이다.
+CUPTI를 포함한 절대 오차는 별도 동기화 실험이 없어 estimated_error_ms=null로 둔다.
+**deep 모드 지연 수치는 분석 전용. GPU만 커널 단위, NPU는 step 단위다.**
