@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: Apache-2.0
+import json
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from tools.hetero.profiler import expected
+from tools.hetero.profiler import perfetto_timeline as timeline
+
+FIXTURE = Path(__file__).parent / "fixtures/synthetic"
+SCRIPT = Path(timeline.__file__)
+
+
+def write(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data) + "\n")
+
+
+class TimelineTests(unittest.TestCase):
+    def test_lanes(self):
+        for intervals, wanted in (
+            ([(0, 3, "a"), (1, 2, "b")], [0, 1]),
+            ([(0, 1, "a"), (1, 2, "a")], [0, 0]),
+            ([(0, 1, "a"), (1, 2, "b")], [0, 0]),
+            ([(0, 3, "a"), (1, 2, "b"), (3, 4, "a")], [0, 1, 0]),
+        ):
+            rows: list[dict] = [
+                dict(track=("GPU",), start=a, end=b, rid=r) for a, b, r in intervals
+            ]
+            timeline.assign_lanes(rows)
+            self.assertEqual(
+                [r["track"][-1] for r in rows], [f"Lane {i}" for i in wanted]
+            )
+
+    def test_slices_without_perfetto(self):
+        row = next(expected.live_rows(FIXTURE / "b0_three_devices/requests.jsonl"))
+        args: tuple = ([row], {"gpu": {row["request_id"]}}, {}, {}, [], False)
+        result = timeline.slices(*args)
+        self.assertEqual(len(result), 5)
+        self.assertEqual(sum(x["args"].get("status") == "추정" for x in result), 2)
+
+    @unittest.skipUnless(
+        os.getenv("PDD_TOOLS_PY") and os.getenv("PERFETTO_TP_BIN"),
+        "tools Python/trace_processor required",
+    )
+    def test_monitor_and_trace(self):
+        for case, mode, count, flows in (
+            ("b0_three_devices", "monitor", 4, 2),
+            ("pdd_skew", "trace", 9, 4),
+        ):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
+                root, fixture = Path(temp), FIXTURE / case
+                row = next(expected.live_rows(fixture / "requests.jsonl"))
+                config = json.loads((fixture / "service_config.json").read_text())
+                write(root / "service/config.json", config)
+                write(root / "run.json", dict(mode=mode))
+                write(root / "w/requests.jsonl", row)
+                anchor = dict(time_ns=0, monotonic_ns=0)
+                write(root / "w/loadgen_run.json", dict(clock_anchor_start=anchor))
+                sid = expected.server_request_id(row["request_id"])
+                batches = []
+                for role in ("prefill", "decode0"):
+                    attrs = {"gen_ai.request.id": sid}
+                    for key, value in (
+                        ("time_in_queue", 0.1),
+                        ("time_to_first_token", 2),
+                        ("time_in_model_prefill", 1),
+                        ("time_in_model_decode", 6),
+                    ):
+                        attrs["gen_ai.latency." + key] = value
+                    fields = [
+                        dict(key=k, value={"stringValue": v}) for k, v in attrs.items()
+                    ]
+                    span = dict(
+                        startTimeUnixNano="102000000000",
+                        endTimeUnixNano="110000000000",
+                        attributes=fields,
+                    )
+                    label = dict(key="service.name", value=dict(stringValue=role))
+                    resource = dict(attributes=[label])
+                    batches.append(
+                        dict(resource=resource, scopeSpans=[dict(spans=[span])])
+                    )
+                write(root / "otel/traces.jsonl", dict(resourceSpans=batches))
+                for i, kind in enumerate(
+                    ("kv_xfer_start", "kv_xfer_done", "kv_h2d", "step")
+                ):
+                    event = dict(
+                        kind=kind,
+                        req_id=sid + "-abcdef01",
+                        phase="decode",
+                        monotonic_ns=(103 + i) * 10**9,
+                        start_ns=104 * 10**9,
+                        end_ns=105 * 10**9,
+                        span_start_ns=105 * 10**9,
+                        span_end_ns=106 * 10**9,
+                    )
+                    write(root / f"rbln_metrics/decode0/events_{i}.jsonl", event)
+                cmd = [os.environ["PDD_TOOLS_PY"], str(SCRIPT), "--run-dir", temp]
+                subprocess.run(cmd, check=True)
+                result = json.loads((root / "w/timeline_validation.json").read_text())
+                self.assertEqual(
+                    (result["status"], result["actual_slices"], result["actual_flows"]),
+                    ("PASS", count, flows),
+                )
+                self.assertTrue(all(r["n"] == r["expected"] for r in result["tracks"]))
+                original = (root / "w/timeline.pftrace").read_bytes()
+                subprocess.run(cmd, check=True)
+                self.assertEqual(original, (root / "w/timeline.pftrace").read_bytes())

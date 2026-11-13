@@ -324,3 +324,17 @@ SDK·드라이버·all-smi/Collector/TP 바이너리의 전이 의존성 전체�
 
 새 환경 적용은 운영자가 `PDD_TOOLS_PY`를 v2 도구 venv의 Python으로 바꿔 수행한다.
 기존 실행 환경·환경 파일은 수정하지 않았다. 실측 재실행·GPU/NPU 부하 작업은 하지 않았다.
+
+## WP8 추가 정적 점검(2026-11-13)
+
+| 대상 | 검사·판단 | 결과 |
+|---|---|---|
+| profiler/perfetto_timeline.py | Bandit JSON·텍스트, nosec 없음 | High/Medium/Low 각 0, 분석 제외 0 |
+| 입출력 | 사용자가 지정한 기존 측정 JSONL·Prometheus 원문 읽기, 저장소 밖 pftrace·검증 JSON 쓰기 | 측정 경로·서버 설정 변경 없음 |
+| 외부 도구 | 환경의 PERFETTO_TP_BIN을 TraceProcessorConfig(bin_path=...)로 지정 | 셸 조립/eval 없음; 신뢰한 로컬 실행 파일을 지정 |
+| UI | install_offline의 127.0.0.1 HTTP 정적 파일 서비스 사용 안내 | 외부 바인드 추가 없음, 화면·실제 네트워크 동작은 수행자 확인 |
+| 추가 의존성 | 기존 분석 파서 재사용을 위해 도구 venv에 prometheus-client==0.26.0 설치 | CUDA·RBLN 및 versions.env/기존 번들은 변경하지 않음; v2 재설치 시 별도 wheel 필요 |
+
+근거: 로컬 작업 기록 `.notes/wp8_bandit.json`, `.notes/wp8_bandit.txt`.
+이번 Bandit 0건을 의존 패키지 전체 취약점 0건으로 확대하지 않는다.
+추가 패키지의 pip-audit와 최종 번들 반영은 별도 납품 재검사 항목이다.

@@ -162,3 +162,13 @@ bash tools/hetero/third_party/make_release.sh --out "$RELEASE_OUT" --tag "$RELEA
 
 함수・CLI 인자의 전체 목록은 [함수 참조](function_reference.md), 실제 실행은 [사용 안내](user_guide.md),
 CI·납품 확인은 [시험 보고](test_report.md)와 [시험 절차](test_procedure.md)를 참조한다.
+
+## WP8 추가(2026-11-13)
+
+| 파일 | 줄 수(wc -l) | 목적 | 실행 |
+|---|---:|---|---|
+| tools/hetero/profiler/perfetto_timeline.py | 358 | 기존 관측값의 MONOTONIC trace 변환·SQL 검증 | PDD_TOOLS_PY + PERFETTO_TP_BIN, perfetto·prometheus-client 필요 |
+| tests/hetero/test_perfetto_timeline.py | 96 | 순수 slice 및 합성 monitor/trace smoke·flow·결정성 | python3 unittest; 도구 환경 없으면 통합 smoke skip |
+
+단일 실행: `"$PDD_TOOLS_PY" tools/hetero/profiler/perfetto_timeline.py --run-dir "$RUN_DIR" --workload "$WORKLOAD"`.
+스윕: `--run-dir` 대신 `--sweep-dir "$SWEEP_DIR"`. 서비스 실행 함수는 호출하지 않는다.

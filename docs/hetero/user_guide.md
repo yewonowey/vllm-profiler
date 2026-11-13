@@ -114,3 +114,46 @@ GPU kernel/cpu_op, NPU 명령은 분할 단위가 달라 비율을 직접 성능
 not_collected를 0으로 치환하지 않는다. T03·R09b, NPU T06의 하한 추정,
 T02의 조건, 1토큰 요청 TPOT의 적용 여부는 [지표 정의](metrics_definition.md)를 따른다.
 보고서·데이터셋만 전달할 때 원본 trace·모델·환경 파일은 포함하지 않는다.
+
+## 관측 타임라인 만들기(WP8)
+
+측정이 끝난 원자료만 변환한다. 서버를 기동하거나 기존 summary를 다시 계산하지 않는다.
+`RUN_DIR`은 service/config.json이 있는 서비스 실행 루트이며 `WORKLOAD`는 그 아래 이름이다.
+먼저 운영 환경 파일을 source하고 PDD_TOOLS_PY·PERFETTO_TP_BIN을 설정한다.
+도구 venv에는 perfetto와 **prometheus-client==0.26.0**이 필요하다(기존 분석 파서 재사용).
+기존 v2 번들은 후자를 포함하지 않는다. 인터넷 PC에서 별도 wheel을 준비한 뒤
+워크스테이션 도구 venv에 설치한다. CUDA·RBLN venv는 바꾸지 않는다.
+
+```bash
+# 인터넷 PC: WP8_WHEELS는 저장소 밖 전달용 디렉터리
+python3 -m pip download --no-deps --dest "$WP8_WHEELS" prometheus-client==0.26.0
+# 워크스테이션: 위 wheel 디렉터리를 전달받은 뒤
+"$PDD_TOOLS_PY" -m pip install --no-index --find-links "$WP8_WHEELS" prometheus-client==0.26.0
+"$PDD_TOOLS_PY" tools/hetero/profiler/perfetto_timeline.py --run-dir "$RUN_DIR" --workload "$WORKLOAD"
+"$PDD_TOOLS_PY" tools/hetero/profiler/perfetto_timeline.py --sweep-dir "$SWEEP_DIR"
+```
+
+기본 출력은 workload/timeline.pftrace와 timeline_validation.json이다.
+`--workload` 생략 시 서비스 루트의 모든 requests.jsonl workload를 변환한다.
+`--out`은 workload 하나를 선택했을 때만 사용한다. 출력은 저장소 밖이어야 한다.
+스윕은 scenarios.json의 attempts 순서를 따라 workload별 마지막 성공 실행을 선택한다.
+성공 조건은 returncode=0 및 run_status=analysis_status=PASS이며, 실패·미완료 후속 실행은 제외한다.
+검증 FAIL이면 종료 코드는 1이다. 검증은 변환 무결성이며 실험의 정확성·성능 PASS를 대신하지 않는다.
+
+오프라인 UI는 install_offline.sh가 안내하는 루프백 HTTP 방식으로 연다.
+TOOLS_DIR은 설치 시 --tools-dir 값, UI_PORT는 사용 가능한 로컬 포트다.
+
+```bash
+python3 -m http.server --bind 127.0.0.1 --directory "$TOOLS_DIR/perfetto-ui" "$UI_PORT"
+```
+
+브라우저에서 `http://127.0.0.1:<UI_PORT>`를 열어 **Open trace file**로 timeline.pftrace를 선택한다.
+trace를 UI 정적 파일 디렉터리로 복사할 필요가 없다. 확인 후 HTTP 프로세스를 종료한다.
+화면 확인은 수행자가 기록한다. SQL 검증 통과가 화면 배치 검토를 대신하지 않는다.
+monitor의 Prefill·Decode에는 `status=추정` 인자가 있다. H2D와 reorder를 별도 구간으로
+해석하지 않는다. Flow는 같은 요청의 연결이며, 계측되지 않은 대기·동기화를 입증하지 않는다.
+
+기본 타임라인은 서버 구간을 겹치지 않는 Lane에 배치한다. Client 큐는 Queued requests,
+실행 중 요청은 In-flight requests 그래프로 표시하며 Request 인자에 queue_wait_s와 arrival을 보존한다.
+`--per-request-tracks`로 요청별 배치를 선택할 수 있다. `--flows all|sample|none`의 기본은 sample이며,
+64개 초과 요청에서는 ID 순서로 고르게 고른 16개만 연결한다. slice 자체는 모두 보존한다.

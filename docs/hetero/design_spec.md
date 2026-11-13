@@ -4,8 +4,8 @@
 
 기준일: 2026-11-10. PLAN v6.2 3·5·7장과 현재 `tools/hetero/`,
 엔진 계측 세 파일, COLUMN_DOCS, tests/hetero 및 로컬 실측 메모를 대조했다.
-아래는 구현된 경로다. PLAN의 Perfetto 통합 타임라인·overview 등 후속 모듈을
-이미 구현한 구성요소로 표시하지 않는다.
+아래는 구현된 경로다. 2026-11-13 WP8 관측 타임라인 변환기를 추가했다.
+원본 deep trace 병합 번들과 overview는 이 변환기의 범위에 포함하지 않는다.
 
 ## 구성과 책임
 
@@ -20,6 +20,7 @@
 | 결과표 | finalize_results.py | summary 기반 표, 비교, 데이터셋·사전; loadgen 지표 재계산 안 함 |
 | 부하 검증 | overhead.py | 같은 none 서비스에 monitor OFF/ON 블록 실행, PER-001 판정 |
 | 연산자 | opprofile.py, operator_stats.py | 온라인 실행과 분리된 단일 장치 LLM 프로파일·무결성·연산/유형 집계 |
+| 타임라인 | profiler/perfetto_timeline.py | 기존 원자료 → MONOTONIC pftrace·SQL 검증; 측정 경로와 분리 |
 | 그림 | report_figures.py | CSV·JSON을 보고서 PNG로 표현; 지표 재측정 없음 |
 | CI | hetero_unit_tests.yml, hetero_profile.yml | 기본 러너 시험·정적 검사와 수동 HW 워크플로 분리 |
 | 납품 | third_party/make_release.sh | 태그 자료·외부 결과 허용 목록·해시 묶음 |
@@ -281,3 +282,40 @@ docs·저장소 LICENSE는 태그에서 추출하므로 작업 중 문서를 태
 외부 dataset은 CSV·사전, samples는 대표 summary·PNG만 복사한다.
 파일당100MiB 초과·symlink 자료를 제외한 내역을 남기며 trace·로그는 허용 목록에 없다.
 MANIFEST는 자기 자신을 제외한 납품 파일 해시다. 실제 rc1 설치 판정은 [시험 보고](test_report.md)에 있다.
+
+## WP8 관측 타임라인(2026-11-13)
+
+[참조 프로젝트 README](https://github.com/SOTA-PNU/vllm-profiler/blob/6528e15a6d6ae6e5608591fb785214fc28b9a20b/README.md)의
+루트 이름과 [설계 문서](https://github.com/SOTA-PNU/vllm-profiler/blob/6528e15a6d6ae6e5608591fb785214fc28b9a20b/docs/design.md)의
+관측 없는 구간을 만들어 내지 않는 원칙을 따른다. 원본 코드를 복사하지 않았다.
+단계는 현재 저장된 marker/속성으로 만들 수 있는 Prefill, KV Transfer, Decode, Decode Step만 사용한다.
+
+| 계층(루트: Heterogeneous LLM Processing) | slice / counter | 근거 |
+|---|---|---|
+| Client / Slot N | Request(send→completed), First Token(instant) | 요청 원자료 |
+| Client / Queue N / request_id | Queue(arrival→assigned) | 동시 대기가 중첩돼도 각각 보존 |
+| GPU·NPU0·NPU1 또는 Prefill(GPU)·Decode(NPU0)·Decode(NPU1) / request_id | Server Queue, Prefill, Decode | trace: OTEL latency 속성과 clock anchor |
+| 같은 서버 / request_id | Prefill, Decode(status=추정) | monitor: send→first_output→completed, 처리 장치 대응 |
+| decoder / KV Transfer / request_id | kv_xfer_start→kv_xfer_done | 정확한 요청 ID 대응 |
+| decoder / KV Layout (H2D+reorder) / request_id | start_ns→end_ns | h2d_ns·reorder_ns·num_blocks·bytes_est 인자 |
+| decoder / Decode Step / rank | span_start_ns→span_end_ns | decode step 관측 구간 |
+| Resources / gpu·npu0·npu1 | utilization(%), power(W), memory(bytes) | classify_devices의 UUID/PCI 대응 |
+| Resources / system | cpu(%), memory(bytes) | all-smi |
+| 서버 / vllm 지표 / label | running·waiting(requests), cache(ratio) | 수집 시각별 게이지 원값 |
+
+trace의 서버 단계는 별도 하위 트랙으로 나눠 겹친 경과시간을 보존한다.
+OTEL REALTIME은 resources.mono와 loadgen clock_anchor를 그대로 사용한다.
+Prefill 끝은 span 시작+TTFT, 시작은 끝−prefill 경과시간이며,
+Decode는 첫 토큰부터 decode 경과시간만큼이다(기존 단계 분석과 같은 정의).
+장치 idle·mixed, 누락 span의 추정 구간은 만들지 않는다. monitor만 명시적으로 추정한다.
+Flow는 Client→Prefill→KV Transfer→KV Layout→Decode 중 실제 존재하는 단계만 잇는다.
+같은 시작 시각에는 이 순서를 적용해 연결이 유실되지 않게 하고 ID·트랙·시각을 정렬한다.
+
+TraceProtoBuilder의 primary_trace_clock과 이벤트 시계는 CLOCK_MONOTONIC(3)이다.
+Perfetto 58.2는 기본 BOOTTIME 도메인을 연결하려 하므로, **생성 파일 안에서만**
+BOOTTIME을 MONOTONIC의 같은 값 별칭으로 선언한다. 실제 호스트 BOOTTIME을 측정했다는 뜻이 아니며
+다른 BOOTTIME 기반 원본 trace와 병합할 근거로 사용하면 안 된다. 입력 시각은 이동하지 않는다.
+
+trace_processor 검증: severity=error/data_loss의 비영 항목, 음수/미종료 slice,
+변환 전후 트랙 UUID별 slice 수·전체 slice 수·flow 수·counter 수를 대조한다.
+음수·역전 입력 구간은 숨기지 않고 검증 FAIL을 기록한다. 실제 자료의 이중 변환은 바이트 동일성도 확인했다.

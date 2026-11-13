@@ -316,3 +316,19 @@ run·overhead의 서비스 인자는 orchestrate start 파서로 전달한다.
 workload 객체 필드는 name/input_tokens/output_tokens/requests/seed/warmup과 구성별 slots 또는 concurrency다.
 예약 이름·중복·모르는 키를 거부한다. 상세 형식은 run.validate_workloads와 scenarios/initial.json을 기준으로 한다.
 GitHub Actions 입력·저장소 변수는 [시험 절차](test_procedure.md)의 CI 표를 따른다.
+
+## WP8 perfetto_timeline.py(2026-11-13)
+
+| 함수 | 입력 → 출력 | 경계 |
+|---|---|---|
+| slices(rows, ids, spans, events, anchors, trace) | 원자료·역할별 ID → 정렬된 slice/instant dict 목록 | Perfetto import 없음; ns, track/name/rid/args |
+| convert(root, workload, out=None) | 서비스 루트·workload 이름 → 검증 dict | pftrace 및 workload/timeline_validation.json 저장, trace_processor 실행 |
+| main() | CLI → 종료 코드 | 전체 선택 workload 변환, 검증 실패 1 |
+
+| CLI | 필수 | 선택 |
+|---|---|---|
+| profiler/perfetto_timeline.py | --run-dir 또는 --sweep-dir | --workload(단일 실행 내 선택), --out(선택 workload 하나일 때만) |
+
+기본 출력은 `<service_run>/<workload>/timeline.pftrace`다.
+--sweep-dir는 finalize와 같은 마지막 성공 attempt/workload 규칙을 따른다.
+의존성·오프라인 UI 사용법은 [사용자 안내서](user_guide.md#관측-타임라인-만들기wp8)를 따른다.

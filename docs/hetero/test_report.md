@@ -35,7 +35,7 @@ results.csv 전체37행에는 s2_b0_3 미완료 이력1행이 남으며 성공 �
 | PT-002 연계 | S8 PDD trace, 1행 | PASS | trace 부하 참고치, PER-001 판정과 분리 |
 | FT-OP-01 | h6b/*/operators.csv·diagnostics.json | GPU 두 phase 집계, NPU prefill 부분 집계 | 한계(제조사 프로파일러 문제): NPU decode 64/256토큰 미수집·prefill 부분 집계 |
 | FT-DS-01 | sweep4/dataset, results·comparison | CSV·사전 생성 | 생성 확인. 일반 정합성은 not_evaluated, S7만 토큰 비교 |
-| FT-VIS-01 | sweep4/figures 및 보고서 그림 | 그림 생성·스모크 통과 | 그래프가 통계적 유의성을 추가 입증하지 않음 |
+| FT-VIS-01 | sweep4/figures 및 WP8 타임라인 | 그림·타임라인 생성 및 SQL 검증 통과 | 아래 실제 자료 표; 화면 확인은 수행자 확인 |
 | FT-LOG-01 | run.json·service/logs, profiler 로그 형식 시험 | 단계 성공/실패·정리 로그 확인 | 모든 운영 장애의 로그 완전성은 미시험 |
 
 ### 재측정 대상 목표 시간 확인
@@ -178,7 +178,7 @@ i512/o128·176요청·seed20260924, B0 슬롯1/1/1, PDD 동시성2.
 | H4 | copy_ 동기 여부, SDK device 시간 의미; T03/R09b 미수집 유지, NPU T06 하한 추정 |
 | H5 | NIXL count의 일반 전송 단위·실제 TLS 경로; 특정 요청수 일치만으로 확정하지 않음 |
 | H6b | 한계(제조사 프로파일러 문제): NPU decode 미수집·prefill 부분 집계. GPU T06 접근량 모델도 미확인 |
-| WP8·WP10 | 범위 조정(합의): 통합 타임라인·overview를 보고서용 그림 9개로 대체 |
+| WP8·WP10 | WP8 기본 관측 타임라인 추가(2026-11-13), 화면 확인 필요. deep 원본 병합 번들은 제외; overview는 합의한 보고서 그림 9개 대체 유지 |
 | H7 | SDK/모델 조건 전반 캐시 호환성 |
 | IT-02-HW | 러너 등록 후 실제 프로파일·정리·artifact 확인 |
 | S7·시간 기준 | monitor 대조로 계측 영향 배제. HND producer에는 reorder0 사용. S3a 배치4 B0는 계측 검증 PASS, 자원·에너지는 짧은 구간 관측(재측정 안 함) |
@@ -193,3 +193,31 @@ rc1 이후 HEAD에는 문서·그림 및 S3/S6 요청 수 설정 변경이 있�
 
 반복성: 위3회 통계에서 S4 0.6B B0의 높은 CV와 다른 B0 조건의 반복적인 꼬리 지연을 구분해 기록했다.
 그림은 scenarios/workload별 마지막 성공 실행만 선택하며, 미완료 이력을 포함한 sweep4 원본 입력으로9개를 재생성했다.
+
+## FT-VIS-01 WP8 실제 자료 변환(2026-11-13)
+
+서버·장치를 다시 실행하지 않고 기존 원자료를 변환했다. 요청 자료 6개 묶음에서
+S5t workload 3개와 S4 두 반복을 분리해 총 9개 파일을 만들었다.
+단위시험 46개, pdd 회귀시험 59개 통과. 합성 monitor/trace smoke도 도구 venv에서 실행했다.
+
+| 자료(결과 루트 기준) | slice | flow | counter | 크기(bytes) | 검증 | 화면 확인 |
+|---|---:|---:|---:|---:|---|---|
+| h0_trace/h0 | 100 | 16 | 20 | 12,882 | PASS | 수행자 확인 |
+| sweep4/runs/s2_b0_4/i4096_o256 | 80 | 32 | 760 | 36,409 | PASS | 수행자 확인 |
+| sweep4/runs/s2_pdd_3/i4096_o256 | 80 | 32 | 1,320 | 54,882 | PASS | 수행자 확인 |
+| sweep4/runs/s5t_pdd_3/i4096_o256 | 1,246 | 64 | 1,320 | 161,388 | PASS | 수행자 확인 |
+| sweep4/runs/s5t_pdd_3/i2176_o2176 | 8,906 | 64 | 8,920 | 1,062,356 | PASS | 수행자 확인 |
+| sweep4/runs/s5t_pdd_3/i256_o4096 | 16,549 | 64 | 13,520 | 1,862,851 | PASS | 수행자 확인 |
+| sweep4/runs/s8_pdd_3/i4096_o256 | 1,238 | 64 | 1,320 | 160,708 | PASS | 수행자 확인 |
+| sweep4/runs/s4_qwen3-0.6b_b0_2/i2048_o256 | 1,520 | 608 | 1,660 | 255,881 | PASS | 수행자 확인 |
+| sweep4/runs/s4_qwen3-0.6b_b0_3/i2048_o256 | 1,520 | 608 | 1,400 | 247,301 | PASS | 수행자 확인 |
+
+각 workload/timeline_validation.json이 근거다. 9개 모두 stats의 error/data_loss 비영 항목 0개,
+음수/미종료 slice 0개이며 트랙 UUID별 slice·flow·counter의 예상/실제 수가 일치한다.
+동일 입력을 두 번 변환한 pftrace도 바이트 단위로 같았다. slice 수에는 instant가 포함된다.
+S2 B0는 미완료 _3 다음 마지막 성공 _4를 선택했다. S4 _2·_3은 꼬리 지연 비교를 위해 직접 지정했다.
+이 검증은 변환기의 무결성 검사이며 기존 run_status나 출력 정합성 판정을 덮어쓰지 않는다.
+
+남은 [HW] 화면 확인: 루프백 오프라인 UI에서 Client 슬롯·요청 ID·flow·자원 축과
+S4 _2/_3 마지막 장치 완료 시각을 확인한 뒤 수행자·일시·판정을 기록한다.
+추가 패키지 prometheus-client의 별도 wheel 전달/최종 번들 반영도 납품 재검사 대상이다.
